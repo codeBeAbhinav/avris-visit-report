@@ -228,7 +228,10 @@ return dt;})();
       res = await fetch(c.url, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' },
         body: JSON.stringify({ key: c.key, op, ...payload }), signal: ctl.signal, redirect: 'follow' });
     } catch (e) {
-      throw fail('NETWORK', e && e.name === 'AbortError' ? 'Google Drive took too long to answer.' : 'Could not reach Google Drive. Check the internet connection.');
+      const offline = typeof navigator !== 'undefined' && navigator.onLine === false;
+      throw fail('NETWORK', offline ? 'No internet connection.'
+        : e && e.name === 'AbortError' ? 'Google Drive took too long to answer. Try again in a moment.'
+        : 'Google did not give the tool an answer. Most often the web app is not shared with "Anyone", or this is the URL of an old deployment. Paste the URL into a browser tab: it should show {"ok":true,...}. If it asks you to sign in, set Who has access to Anyone, make a New version and deploy again.');
     } finally { clearTimeout(timer); }
     if (!res.ok) throw fail('HTTP', `Google Drive answered with an error (${res.status}).`);
     let out;
@@ -537,7 +540,7 @@ return dt;})();
           return r2;
         });
       } catch (e) {
-        const msg = cl.isNetwork(e) ? 'No connection to Google Drive.' : e.message;
+        const msg = e.message;
         await enqueue(async () => { const r2 = await getRec(id); if (r2 && r2.cloud) { r2.cloud.error = msg; await putRec(r2); } });
         throw e;
       }
@@ -655,7 +658,7 @@ return dt;})();
             if (navigator.onLine === false) return E(OFFLINE, 503);
             let issued;
             try { issued = await window.AvrisCloud.call('issue', { draft: rec.id, by: who }, 25000); }
-            catch (e) { return window.AvrisCloud.isNetwork(e) ? E(OFFLINE, 503) : E(e.message, 502); }
+            catch (e) { return window.AvrisCloud.isNetwork(e) && navigator.onLine === false ? E(OFFLINE, 503) : E(e.message, 502); }
             const res = await pyJson('apply_fields', [dataOf(rec), JSON.stringify({ report_no: issued.number })]);
             rec.data = res.data;
             rec.cloud = { number: issued.number, pending: '', error: '', saved_at: '', folder_url: '', sheet_url: '', seq: 0 };
