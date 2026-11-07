@@ -242,8 +242,26 @@ return dt;})();
     return out;
   }
 
+  // Works out why a connection failed, by asking the script for a plain read (no key) as well.
+  async function diagnose(url) {
+    const out = { read: 'blocked' };
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), 20000);
+    try {
+      const r = await fetch(url, { redirect: 'follow', signal: ctl.signal });
+      const t = await r.text();
+      out.read = /"ok"\s*:\s*true/.test(t) && /AVRIS Visit Report register/.test(t) ? 'ok' : 'other';
+    } catch { out.read = 'blocked'; } finally { clearTimeout(timer); }
+    return out;
+  }
+  function explain(d) {
+    if (d.read === 'ok') return 'The script answers a plain read, but this browser blocked the save request to it. That points to the browser, an extension (ad or privacy blocker) or the network, not to your set-up. Try Chrome in a normal window with extensions off, or another device, and tell me the browser and device if it still fails.';
+    if (d.read === 'other') return 'The URL answered, but not as the AVRIS script. It is probably a Google sign-in or error page. Open Deploy, Manage deployments, check that Who has access is Anyone, make a New version, deploy, and copy the Web app URL again.';
+    return 'This browser cannot read the script at all. Two causes are common. 1) Who has access is not set to plain Anyone: open the URL in a private window; if it asks you to sign in, set Anyone, make a New version and deploy. 2) A browser extension or network filter blocks Google: try Chrome in a normal window with extensions off.';
+  }
+
   window.AvrisCloud = {
-    config, enabled, save, clear, call,
+    config, enabled, save, clear, call, diagnose, explain,
     ping: (url, key) => call('ping', {}, 30000, url ? { url, key } : null),
     isNetwork: (e) => !!e && e.code === 'NETWORK',
   };
@@ -1204,7 +1222,12 @@ return dt;})();
         paint(h('span', null, link(p.folder_url, 'Open Drive folder'), link(p.sheet_url, 'Open register')));
       } catch (e) {
         if (prev && prev.source === 'device') C.save(prev.url, prev.key); else C.clear();
-        toast(e.message, 'err');
+        if (C.isNetwork(e) && navigator.onLine !== false) {
+          toast('Could not connect. The reason is shown under Google Drive.', 'err');
+          paint(h('div', { class: 'notice warn', style: 'margin-top:8px' }, 'Checking why…'));
+          const d = await C.diagnose(curl.trim());
+          paint(h('div', { class: 'notice warn', style: 'margin-top:8px' }, C.explain(d)));
+        } else toast(e.message, 'err');
       }
     };
     return h('div', { class: 'stack' }, note, uf.el, kf.el, btn('Save and test', 'primary', test),
