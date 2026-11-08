@@ -1,0 +1,292 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AVRIS Site Visit Reports</title>
+<meta name="description" content="Staff tool for AVRIS surveyors: choose the visit, fill it in on site, check it, then generate the report.">
+<meta name="robots" content="noindex">
+<meta name="theme-color" content="#ffde58">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%23ffde58'/%3E%3Crect x='6' y='6' width='20' height='20' fill='%23111827'/%3E%3Crect x='11' y='11' width='10' height='10' fill='%235be400'/%3E%3C/svg%3E">
+<style>
+:root {
+  --ground: #ffde58; --ink: #111827; --slate: #3a4152; --card: #ffffff;
+  --green: #5be400; --gold: #b99f3c; --red: #d92d20; --brown: #673910; --warm: #574430;
+  --font: Inter, "SF Pro Text", "Helvetica Neue", "Segoe UI", Helvetica, Arial, sans-serif;
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; scroll-padding-top: 16px; }
+body { margin: 0; background: var(--ground); color: var(--ink); font: 400 17px/1.5 var(--font); -webkit-text-size-adjust: 100%; text-align: left; }
+.wrap { max-width: 760px; margin: 0 auto; padding: 0 20px; }
+a { color: var(--ink); font-weight: 700; text-decoration: none; }
+:focus-visible { outline: 3px solid var(--ink); outline-offset: 2px; }
+em, i { font-style: normal; }
+
+/* top line */
+.top { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 20px 0 0; }
+.eyebrow { font-size: 11px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--brown); }
+.chip { display: inline-block; background: var(--green); border: 2px solid var(--ink); color: var(--ink); font-size: 11px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; padding: 4px 10px; line-height: 1.2; text-align: center; }
+.chip.off { background: transparent; }
+.chip.stop { background: transparent; border-color: var(--red); color: var(--red); }
+
+/* hero */
+.hero { padding: 40px 0 28px; }
+h1 { font-size: clamp(32px, 7vw, 46px); line-height: 1.08; margin: 0 0 14px; font-weight: 700; letter-spacing: -.01em; max-width: 14em; }
+.lead { font-size: 19px; max-width: 34em; margin: 0 0 24px; }
+.btn { display: inline-block; background: var(--ink); color: var(--ground); border: 2px solid var(--ink); font-weight: 700; font-size: 17px; padding: 14px 22px; min-height: 52px; cursor: pointer; text-align: center; }
+.btn.light { background: var(--card); color: var(--ink); }
+.actions { display: flex; flex-wrap: wrap; gap: 12px; }
+.note { font-size: 14px; color: var(--warm); margin: 14px 0 0; }
+
+/* sections */
+section { padding: 36px 0 8px; }
+h2 { font-size: 27px; line-height: 1.15; margin: 10px 0 8px; font-weight: 700; }
+h3 { font-size: 19px; line-height: 1.25; margin: 0 0 4px; font-weight: 700; }
+.sub { margin: 0 0 20px; max-width: 36em; }
+.card { background: var(--card); border: 2px solid var(--ink); padding: 18px 20px; }
+.card + .card { margin-top: 14px; }
+.card p { margin: 6px 0 0; }
+.cap { font-size: 14px; color: var(--warm); }
+
+/* the path */
+.path { list-style: none; margin: 0; padding: 0; counter-reset: s; }
+.path li { counter-increment: s; position: relative; background: var(--card); border: 2px solid var(--ink); padding: 16px 20px 16px 72px; min-height: 76px; }
+.path li + li { margin-top: 12px; }
+.path li::before { content: counter(s); position: absolute; left: 20px; top: 16px; width: 34px; height: 34px; border: 2px solid var(--ink); background: var(--green); font-weight: 700; font-size: 18px; display: flex; align-items: center; justify-content: center; }
+.path li p { margin: 2px 0 0; }
+.path li.last { background: var(--ink); color: #fff; }
+.path li.last h3 { color: var(--ground); }
+.path li.last::before { border-color: var(--ink); }
+.path li.last p { color: #e3d9b4; }
+
+/* table */
+.tablewrap { overflow-x: auto; margin: 0 -20px; padding: 0 20px; }
+table { border-collapse: collapse; width: 100%; min-width: 560px; }
+th { text-align: left; font-size: 11px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--brown); padding: 0 12px 8px 0; border-bottom: 1px solid var(--gold); }
+td { text-align: left; vertical-align: top; padding: 12px 12px 12px 0; border-bottom: 1px solid var(--gold); font-size: 16px; }
+td strong { font-size: 17px; }
+td.num, th.num { text-align: right; padding-right: 0; }
+
+/* do and do not */
+.two { display: grid; gap: 14px; grid-template-columns: 1fr; }
+@media (min-width: 700px) { .two { grid-template-columns: 1fr 1fr; } .two .card + .card { margin-top: 0; } }
+ul.tick { margin: 12px 0 0; padding-left: 20px; }
+ul.tick li { margin: 0 0 8px; }
+
+/* steps (numbered text lists) */
+ol.steps { margin: 12px 0 0; padding-left: 22px; }
+ol.steps li { margin: 0 0 8px; }
+code { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: .9em; background: #fff; border: 1px solid var(--ink); padding: 1px 5px; }
+
+/* help */
+details { background: var(--card); border: 2px solid var(--ink); padding: 0; }
+details + details { margin-top: 10px; }
+summary { list-style: none; cursor: pointer; padding: 14px 52px 14px 20px; font-weight: 700; position: relative; min-height: 52px; }
+summary::-webkit-details-marker { display: none; }
+summary::after { content: "+"; position: absolute; right: 20px; top: 12px; font-size: 24px; line-height: 1; }
+details[open] summary::after { content: "\2212"; }
+details .body { padding: 0 20px 16px; }
+details .body p { margin: 0 0 10px; }
+
+.nav { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 4px; }
+.nav a { display: inline-block; border: 2px solid var(--ink); background: var(--card); padding: 8px 12px; font-size: 14px; min-height: 40px; }
+
+footer { margin-top: 56px; padding: 22px 0 36px; border-top: 1px solid var(--gold); }
+footer .eyebrow { display: block; margin: 0; }
+footer .tag { color: var(--brown); }
+.cta { padding: 40px 0 0; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="top">
+    <span class="eyebrow">AVRIS &nbsp;/&nbsp; Site visit reports</span>
+    <span class="chip">Staff tool</span>
+  </div>
+
+  <div class="hero">
+    <h1>Make a site visit report that is ready to send.</h1>
+    <p class="lead">For AVRIS staff and surveyors. Choose the kind of visit, fill it in on site, check it, then tap Generate. Generate is always the last step.</p>
+    <div class="actions">
+      <a class="btn" href="app.html">Start a report</a>
+      <a class="btn light" href="#before">Read before you start</a>
+    </div>
+    <p class="note">The tool opens on its own page and takes a few seconds to load the first time. It keeps your reports on this device.</p>
+  </div>
+
+  <nav class="nav" aria-label="On this page">
+    <a href="#how">How it works</a>
+    <a href="#types">Visit types</a>
+    <a href="#before">Before you start</a>
+    <a href="#setup">First-time setup</a>
+    <a href="#generate">What Generate does</a>
+    <a href="#help">Help</a>
+  </nav>
+
+  <section id="how">
+    <span class="eyebrow">The path</span>
+    <h2>Four steps, in this order</h2>
+    <p class="sub">Every report follows the same path. The tool shows only the steps that fit the visit you chose.</p>
+    <ol class="path">
+      <li>
+        <h3>Set up once on your device</h3>
+        <p>Open the tool in Chrome, Edge or Safari and enter your name. Your name is filled in as Prepared by on every new report.</p>
+      </li>
+      <li>
+        <h3>Choose the visit type</h3>
+        <p>Full site survey, Follow-up visit or Quick enquiry. The choice decides which steps and which required items you see.</p>
+      </li>
+      <li>
+        <h3>Fill in the visit</h3>
+        <p>Work through the steps on site. Everything saves as you type, so you can stop and return later.</p>
+      </li>
+      <li class="last">
+        <h3>Check, then Generate</h3>
+        <p>The last screen lists anything still missing. When every required item is done, the Generate report button appears. Tap it to lock the report and prepare the PDF, Word and CSV files.</p>
+      </li>
+    </ol>
+  </section>
+
+  <section id="types">
+    <span class="eyebrow">Step 2 in detail</span>
+    <h2>Which visit type should I choose?</h2>
+    <p class="sub">Pick the one that matches the visit. You can change the type on the first step of a report if you chose wrongly.</p>
+    <div class="tablewrap">
+      <table>
+        <thead>
+          <tr><th>Visit type</th><th>Use it for</th><th class="num">Steps</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><strong>Full site survey</strong></td><td>A first visit to a new site. Records people met, site and waste details, space and route, photos and the recommendation.</td><td class="num">11</td></tr>
+          <tr><td><strong>Follow-up visit</strong></td><td>A return visit to a site already surveyed. Records what changed, new photos and the next step. Waste per day is optional.</td><td class="num">7</td></tr>
+          <tr><td><strong>Quick enquiry</strong></td><td>A short visit or call to size up a lead. Records basics, site scale and waste per day only.</td><td class="num">6</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="cap" style="margin-top:12px">Every type ends with the same Check and generate screen. The report layout and numbering are the same for all types. The visit type is printed on page 1 for Follow-up visit and Quick enquiry.</p>
+  </section>
+
+  <section id="before">
+    <span class="eyebrow">Read this first</span>
+    <h2>Before you start</h2>
+    <p class="sub">The tool shows the same list on screen before it starts. These points protect your reports.</p>
+    <div class="two">
+      <div class="card">
+        <span class="chip">Do</span>
+        <ul class="tick">
+          <li>Fill in the steps in order. Everything saves as you type.</li>
+          <li>Check the customer name, date and kg per day before you generate.</li>
+          <li>Tap Generate report only when the visit is finished. You can reopen it later.</li>
+          <li>Be online when you tap Generate if Google Drive is connected.</li>
+          <li>Download a backup from Settings now and then.</li>
+        </ul>
+      </div>
+      <div class="card">
+        <span class="chip stop">Do not</span>
+        <ul class="tick">
+          <li>Do not clear this site's data or cookies in the browser. Reports are stored there and would be lost.</li>
+          <li>Do not use a private or incognito window. Reports vanish when it closes.</li>
+          <li>Do not open the tool inside a chat app or preview. Use Chrome, Edge or Safari.</li>
+          <li>Do not close the page while it says Saving to Google Drive.</li>
+          <li>Do not share the Google Drive web link or access key.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section id="setup">
+    <span class="eyebrow">Step 1 in detail</span>
+    <h2>First-time setup</h2>
+    <p class="sub">Each phone or computer needs this once. Reports are stored per device and per web address, so always use the same address.</p>
+
+    <div class="card">
+      <h3>On your own device</h3>
+      <ol class="steps">
+        <li>Open the AVRIS web address in Chrome, Edge or Safari, in a normal window.</li>
+        <li>Read the Before you start screen and tap <strong>I understand, start the tool</strong>. The tool starts only after this.</li>
+        <li>Enter your name and tap Continue. The first start takes a few seconds.</li>
+        <li>Optional on a phone: use the browser menu and choose Add to Home Screen, so the tool opens like an app.</li>
+      </ol>
+    </div>
+
+    <div class="card">
+      <h3>Connect Google Drive (optional)</h3>
+      <p>With Drive connected, every generated report gets the next number and is filed in Drive and in the register Sheet. Without it, reports are numbered on this device only.</p>
+      <p><strong>The administrator</strong> does the script set-up once. A surveyor then only needs the two items it produces: the <strong>Web app URL</strong> (ends in <code>/exec</code>) and the <strong>access key</strong>.</p>
+      <ol class="steps">
+        <li>In the tool, tap your name on Home to open Settings.</li>
+        <li>Under Google Drive, paste the Web app URL and the access key.</li>
+        <li>Tap <strong>Save and test</strong>. You should see Connected to Google Drive.</li>
+      </ol>
+      <p class="cap">Administrator set-up: create the script from the supplied code file, run <code>setup</code> once and allow permissions, then Deploy as a Web app with Execute as Me and Who has access set to Anyone. The full steps are in the Drive set-up guide that comes with the code file.</p>
+    </div>
+  </section>
+
+  <section id="generate">
+    <span class="eyebrow">Step 4 in detail</span>
+    <h2>What Generate does</h2>
+    <p class="sub">Generate appears only on the last screen, after every required item is done.</p>
+    <div class="card">
+      <ol class="steps" style="margin-top:0">
+        <li>It locks the report and moves it to <strong>Completed</strong>. You can reopen it later to edit and generate again.</li>
+        <li>It prepares the PDF, Word and CSV files, which you download on the next screen.</li>
+        <li>With Drive connected, it issues the next report number, for example <code>Avris/CHUGG/S.A/014/26-27</code>. The count restarts at 001 on 1 April.</li>
+        <li>With Drive connected, it files the PDF, Word file, CSV, photos and a restorable data file in a folder for that report, and adds one row to the register Sheet.</li>
+      </ol>
+      <p class="cap">Drafts show --- as the number until you generate. If Drive is connected and you are offline, Generate waits until you are online, so no number is wasted. If a Drive upload fails after the number is issued, the report shows a Retry button and the tool retries by itself when you are back online.</p>
+    </div>
+  </section>
+
+  <section id="help">
+    <span class="eyebrow">Help</span>
+    <h2>If something looks wrong</h2>
+    <p class="sub">Open the question that matches what you see.</p>
+
+    <details>
+      <summary>I cannot see the Generate report button</summary>
+      <div class="body"><p>Generate is hidden until the visit is complete. Open the last screen, Check and generate. It lists every item still needed. Fix those, and the button appears at the bottom of the screen.</p></div>
+    </details>
+    <details>
+      <summary>My reports are missing</summary>
+      <div class="body"><p>Reports live in the browser on the device where you made them. They do not follow you to another phone, another browser or another web address. Check that you are on the same device, the same browser and the same address.</p><p>If you cleared site data or used a private window, the reports on that device are gone. Restore from a backup file: Settings, then Restore from backup.</p></div>
+    </details>
+    <details>
+      <summary>How do I move reports to another device?</summary>
+      <div class="body"><p>On the old device open Settings and tap Download backup. Send the file to the new device, open Settings there and choose Restore from backup. With Drive connected, each generated report also has a <code>report data.json</code> file in its Drive folder, which Restore accepts.</p></div>
+    </details>
+    <details>
+      <summary>Google Drive says it could not answer or save</summary>
+      <div class="body">
+        <p>In Settings, under Google Drive, tap Save and test. The tool shows the likely cause. The usual ones are:</p>
+        <ul class="tick">
+          <li>Who has access is not set to Anyone on the web app. Set it to Anyone, make a New version and deploy.</li>
+          <li>The URL pasted is a Library URL. Copy the Web app URL that ends in <code>/exec</code>.</li>
+          <li>The script permissions were never allowed. Run <code>setup</code> once in the script editor and allow access.</li>
+          <li>The access key is wrong or still reads the placeholder. Copy the whole ACCESS_KEY value from the script.</li>
+          <li>A browser extension or network filter blocks Google. Try Chrome in a normal window with extensions off.</li>
+        </ul>
+      </div></details>
+    <details>
+      <summary>The tool does not start, or shows STOP on the checks</summary>
+      <div class="body"><p>Open the tool in Chrome, Edge or Safari in a normal window. Chat apps, social apps and preview panes often block storage or WebAssembly, which the tool needs. Open the same address in the browser app itself.</p></div>
+    </details>
+    <details>
+      <summary>Can I see the warnings again?</summary>
+      <div class="body"><p>Yes. In the tool open Settings and choose Show the warnings again. They also reappear every 14 days.</p></div>
+    </details>
+  </section>
+
+  <div class="cta">
+    <div class="actions">
+      <a class="btn" href="app.html">Start a report</a>
+    </div>
+  </div>
+
+  <footer>
+    <span class="eyebrow tag">Environment Technologies Private Limited</span>
+  </footer>
+
+</div>
+</body>
+</html>
