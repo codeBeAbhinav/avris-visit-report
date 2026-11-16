@@ -1,0 +1,42 @@
+# Render blueprint: creates the Python service with a persistent disk.
+# A persistent disk needs a paid instance type ("starter" or higher). Free instances lose their files on every restart.
+services:
+  - type: web
+    name: avris-visit-report-api
+    runtime: python
+    plan: starter
+    buildCommand: pip install -r requirements.txt
+    # One worker with threads: SQLite is the single source of truth and writes are serialised by transactions.
+    startCommand: gunicorn app:app --workers 1 --threads 8 --timeout 120 --bind 0.0.0.0:$PORT
+    healthCheckPath: /api/health
+    disk:
+      name: avris-data
+      mountPath: /var/data
+      sizeGB: 5
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.3
+      - key: DATA_DIR
+        value: /var/data
+      - key: ACCESS_KEY
+        generateValue: true
+      - key: ORG_NAME
+        value: Environment Technologies Private Limited
+      - key: ALLOWED_ORIGINS
+        sync: false
+      - key: BASE_URL
+        sync: false
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_PORT
+        value: "587"
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASSWORD
+        sync: false
+      - key: MAIL_FROM
+        sync: false
+      - key: SALES_EMAILS
+        sync: false
+      - key: ALLOWED_EMAIL_DOMAINS
+        sync: false
