@@ -66,3 +66,14 @@ The breakpoints are in the "responsive layout" part of `src/app.css`; the side c
 ## Built-in Google connection
 
 `src/cloud.js` holds the register's web app URL and access key (`AVRIS_CLOUD_DEFAULT`), so every copy of the tool is connected without set-up. A device can still save its own in Settings. Because the key is readable in the file, share the HTML only inside AVRIS.
+
+## Report inputs (November 2026 update)
+
+- **Example amounts.** A new report starts with example figures in the number fields (site area, people served, kitchen staff, waste per day, peak-day waste, bulk-generator waste, meals, plant space, distance). Each is marked EXAMPLE until someone types over it or taps Keep, and the report cannot be generated while any example is unchecked. Values: `EXAMPLES` in `src/py/avris_core.py`.
+- **Tap all that apply.** Multi-choice lists (present issues, busiest days, what the waste includes) show a tick box, a count, Select all and Clear. "What the waste includes" now has 12 options (`INCLUDES`).
+- **Waste numbers** (step 5) now holds the average day, busiest days, peak-day waste and bulk generators (with their kg/day), with live calculations. Page 2 of the report has a Waste numbers section and peak-day utilisation and bulk-generator share under Calculated.
+- **Space and route** (step 7) explains how to measure, shows the floor area, and adds "What the route is like", printed with the distance in row 11.
+- **Recommendation** (step 9): the two standard paragraphs are shown greyed with a lock and "Fixed text, cannot be edited"; only "Your line" is editable.
+- **Capital letters.** Names, designations, customer, address and Prepared by get capital initials; notes get sentence capitals; emails go lower case. Applied when you leave a field and again when the report is generated (`cap_words`, `cap_sentences`, `tidy_caps`).
+- **Signature** (step 11): draw on screen or upload a photo. Both are stored as one PNG in the exact proportions of the report's signature box (233 × 58 pt), so the preview box is what prints. Uploads: PNG/JPEG/HEIC, up to 10 MB, at least 600 × 150 px; the paper is turned white and the ink dark; the photo is cut to the box from its centre, and it is refused if more than 2% of the signature would be cut off, if it runs off the photo edge, or if no signature is found. It is an image of a signature for an internal report, not a certified digital signature (DSC).
+- **Photos** (step 8): each frame on screen has the report's 4:3 proportions and shows exactly what prints. Fill frame crops the edges; Whole photo keeps all of it (chosen automatically for portrait and very wide photos). Photos under 640 × 480 px, over 25 MB or in other formats are refused; dark, blurred and low-resolution photos get a warning. Captions (up to 200 characters) wrap in full on screen and in the report, labelled "Photo 1 (Tag): caption".

@@ -47,7 +47,10 @@ SITE_TYPES = ["Hotel", "Restaurant", "Hospital", "Campus", "Mall / Office",
 OP_DAYS = ["5 days", "6 days", "7 days"]
 ISSUES = ["Smell", "Pests", "Cost", "Hygiene", "Space", "Landfill ban"]
 NONVEG = ["None", "Some (under 25%)", "Mixed (25–50%)", "Mostly (over 50%)"]
-INCLUDES = ["Cooked food", "Raw / peelings", "Plate leftovers", "Expired / packaged", "Bones / shells"]
+INCLUDES = ["Cooked food", "Raw / peelings", "Plate leftovers", "Rice and grains", "Bakery and sweets", "Dairy",
+            "Eggshells", "Bones / shells", "Tea / coffee grounds", "Expired / packaged", "Used cooking oil",
+            "Flowers / garden waste"]
+PEAK_DAYS = ["Weekdays", "Weekends", "Public holidays", "Festival season", "Events / banquets", "Term or exam time"]
 SEGREGATED = ["Yes", "Partly", "No"]
 PLANT_SIZES = ["CHUGG 75", "CHUGG 150"]
 FOLLOWUP = ["Yes", "Maybe", "No"]
@@ -59,11 +62,11 @@ STEPS = [
     ("People met", "Who did you speak to? Add everyone useful for follow-up."),
     ("Site type and scale", "What kind of place is it, and how big?"),
     ("Today's situation", "What is going wrong with waste now, and how is it handled today?"),
-    ("Waste numbers", "Food waste only. Leave out paper and plastics."),
+    ("Waste numbers", "Food waste only. Leave out paper and plastics. Include the busiest days and any bulk generators."),
     ("Waste profile", "What is in the waste, and how is it handled in the kitchen?"),
-    ("Space and route", "Feet for the plant space, metres to the kitchen."),
-    ("Photos", "Plant spot, kitchen, waste, route. Add a short caption to each."),
-    ("Recommendation", "Pick the plant size. The standard text fills in on its own."),
+    ("Space and route", "Measure the clear floor space for the plant in feet, and the walking route from the kitchen in metres."),
+    ("Photos", "Plant spot, kitchen, waste, route. Add a short caption and a tag to each."),
+    ("Recommendation", "Pick the plant size. The standard text is fixed; you can add one line of your own."),
     ("Follow-up and remarks", "Is another visit needed? Anything else the team should know?"),
     ("Check and send", "Fill anything still missing. You can send once every item is done."),
 ]
@@ -75,6 +78,24 @@ REC_P1 = ("We recommend to install {size} which can process up to {cap} kg of fo
 REC_P2 = ("By installing the CHUGG food waste treatment system, there is no need to store food waste, "
           "ensuring better hygiene and on-site processing. It reduces landfill dependency, waste "
           "transportation, and carbon emissions, aligning with sustainability and ESG objectives.")
+
+# Example amounts pre-filled on a new report. Each one must be changed or confirmed before the report can be
+# generated, so an example can never reach a customer by accident. key: (value, label, step index)
+EXAMPLES = {
+    "site_area": ("25000", "Site area", 2), "served": ("800", "People served per day", 2),
+    "kitchen_staff": ("25", "Kitchen staff", 2),
+    "waste_kg": ("120", "Waste per day", 4), "peak_kg": ("160", "Peak-day waste", 4),
+    "bulk_kg": ("40", "Waste from bulk generators", 4),
+    "meals": ("1600", "Meals served per day", 5),
+    "plant_l": ("20", "Plant space length", 6), "plant_w": ("12", "Plant space width", 6),
+    "dist": ("35", "Distance from site to kitchen", 6),
+}
+
+# Signature box on the printed report, in points. The screen preview and the stored image use this ratio.
+SIG_W, SIG_H = 233, 58
+# Photo frame on the printed report, in points (4:3).
+PHOTO_W, BOXH = 244, 183
+PHOTO_FITS = ("fill", "whole")
 
 WASTE_HOW_LABEL = "How are you calculating the waste per day or the waste generated?"
 STEP_REQ_MSG = "Are you sure you want to proceed? There are required forms which have not been filled."
@@ -778,11 +799,12 @@ def new_report(existing_count):
         "site_type": "", "site_area": "", "served": "", "kitchen_staff": "", "op_days": "",
         "issues": [], "issues_text": "", "existing_system": "",
         "waste_kg": "", "waste_how": "",
-        "meals": "", "nonveg": "", "includes": [], "segregated": "", "peak": "", "bulk": "",
-        "plant_l": "", "plant_w": "", "dist": "",
+        "peak_days": [], "peak": "", "peak_kg": "", "bulk": "", "bulk_kg": "",
+        "meals": "", "nonveg": "", "includes": [], "segregated": "",
+        "plant_l": "", "plant_w": "", "dist": "", "route": "", "examples": [],
         "photos": [], "plant_size": "", "rec_extra": "",
         "followup": "", "followup_when": "", "remarks": "",
-        "prepared_by": "", "prepared_sig": [],
+        "prepared_by": "", "prepared_sig": [], "prepared_sig_img": "",
     }
 
 
@@ -853,8 +875,67 @@ def missing(r):
     if followup_open(r):
         need(r["followup_when"].strip(), "Follow-up: when", 9)
     need(r["prepared_by"].strip(), "Prepared by: name", 10)
-    need(r["prepared_sig"], "Prepared by: signature", 10)
+    need(r["prepared_sig"] or r.get("prepared_sig_img"), "Prepared by: signature", 10)
+    for k in r.get("examples") or []:
+        if k in EXAMPLES:
+            m.append((f"Check the example value: {EXAMPLES[k][1]}", EXAMPLES[k][2]))
+    m.sort(key=lambda x: x[1])
     return m
+
+
+# ---------------------------------------------------------------- capitalisation
+SMALL_WORDS = {"of", "and", "the", "for", "at", "in", "on", "by", "to", "a", "an", "&"}
+WORD_FIELDS = ("customer", "address", "prepared_by")
+PEOPLE_WORD_FIELDS = ("name", "designation")
+SENTENCE_FIELDS = ("issues_text", "existing_system", "waste_how", "peak", "bulk", "route", "rec_extra",
+                   "followup_when", "remarks")
+
+
+def cap_words(s):
+    """Capitalise each lower-case word. Words already holding a capital (ITC, McDonald, iPhone) stay as typed."""
+    out, first = [], True
+    for tok in re.split(r"(\s+)", s or ""):
+        if not tok or tok.isspace():
+            out.append(tok)
+            continue
+        m = re.match(r"^([^A-Za-z0-9]*)([a-z][a-z'\u2019.-]*)(.*)$", tok)
+        if m and tok == tok.lower() and not ("@" in tok) and not (not first and m.group(2) in SMALL_WORDS):
+            tok = m.group(1) + m.group(2)[0].upper() + m.group(2)[1:] + m.group(3)
+        out.append(tok)
+        first = False
+    return "".join(out)
+
+
+def cap_sentences(s):
+    """Capital letter at the start of each sentence and line, and a capital I on its own."""
+    s = re.sub(r"(^|[.!?]\s+|\n\s*)([a-z])", lambda m: m.group(1) + m.group(2).upper(), s or "")
+    return re.sub(r"\bi\b(?=[\s'\u2019,.!?]|$)", "I", s)
+
+
+def tidy_caps(r):
+    """Apply the capitalisation rules to a report (on generate). Returns the changed field names."""
+    changed = []
+    for k in WORD_FIELDS:
+        v = cap_words(r.get(k, ""))
+        if v != r.get(k, ""):
+            r[k] = v
+            changed.append(k)
+    for k in SENTENCE_FIELDS:
+        v = cap_sentences(r.get(k, ""))
+        if v != r.get(k, ""):
+            r[k] = v
+            changed.append(k)
+    ppl = []
+    for p in r.get("people") or []:
+        q = dict(p)
+        for k in PEOPLE_WORD_FIELDS:
+            q[k] = cap_words(q.get(k, ""))
+        q["email"] = (q.get("email", "") or "").strip().lower()
+        ppl.append(q)
+    if ppl != (r.get("people") or []):
+        r["people"] = ppl
+        changed.append("people")
+    return changed
 
 
 def issues_line(r):
@@ -872,6 +953,34 @@ def rec_paragraphs(r):
         ps.append(r["rec_extra"].strip())
     ps.append(REC_P2)
     return ps
+
+
+def route_line(r):
+    d = f"{r['dist']} m" if str(r["dist"]).strip() else ""
+    t = (r.get("route") or "").strip()
+    return ". ".join(x for x in (d, t) if x) or "—"
+
+
+def peak_line(r):
+    days = ", ".join(r.get("peak_days") or [])
+    t = (r.get("peak") or "").strip()
+    return ". ".join(x for x in (days, t) if x) or "—"
+
+
+def bulk_line(r):
+    t = (r.get("bulk") or "").strip()
+    k = str(r.get("bulk_kg", "")).strip()
+    if t and k:
+        return f"{t} ({k} kg/day)"
+    return t or (f"{k} kg/day" if k else "—")
+
+
+def photo_label(i, ph):
+    """Caption line under a photo: Photo 1 (Kitchen): caption."""
+    tag = (ph.get("tag") or "").strip()
+    cap = (ph.get("caption") or "").strip()
+    head = f"Photo {i + 1}" + (f" ({tag})" if tag else "")
+    return f"{head}: {cap}" if cap else head
 
 
 def followup_line(r):
@@ -900,6 +1009,11 @@ def build_pages(r):
     space = f"{r['plant_l']} × {r['plant_w']} ft" if r["plant_l"] and r["plant_w"] else "—"
     waste = f"{r['waste_kg']} kg – {r['waste_how']}" if r["waste_kg"] else "—"
     remarks = dash(r["remarks"]) if followup_open(r) else "—"
+    pk = num(r.get("peak_kg", ""))
+    peak_util = (f"{round(pk / cap * 100)}% of {size} capacity ({r['peak_kg']} of {cap} kg/day)"
+                 if pk and cap else "—")
+    bk = num(r.get("bulk_kg", ""))
+    bulk_share = f"{round(bk / kg * 100)}% of daily waste ({r['bulk_kg']} of {r['waste_kg']} kg)" if bk and kg else "—"
 
     p1 = {"title": "Customer Visit Report – CHUGG",
           "sub": [f"S.No: {no}    Date: {fmt_date(r['visit_date'])}", f"Name: {cust}"],
@@ -914,8 +1028,7 @@ def build_pages(r):
               ("row", 8, "Waste per day in kgs (excluding paper/plastics)", waste),
               ("row", 9, "Space availability for installation of CHUGG Plant (in feet)", space),
               ("row", 10, "CHUGG plant size recommended", dash(size)),
-              ("row", 11, "Distance from site to kitchen (in meters)",
-               f"{r['dist']} m" if r["dist"] else "—"),
+              ("row", 11, "Distance from site to kitchen (in meters)", route_line(r)),
               ("row", 12, "Follow up visit required / when", followup_line(r)),
               ("row", 13, "Remarks", remarks),
           ]}
@@ -928,25 +1041,29 @@ def build_pages(r):
               ("row", 16, "People served per day", dash(r["served"])),
               ("row", 17, "Kitchen staff", dash(r["kitchen_staff"])),
               ("row", 18, "Operating days per week", r["op_days"].split()[0] if r["op_days"] else "—"),
+              ("sec", "Waste numbers"),
+              ("row", 19, "Peak days or times", peak_line(r)),
+              ("row", 20, "Peak-day waste", f"{r['peak_kg']} kg/day" if str(r.get("peak_kg", "")).strip() else "—"),
+              ("row", 21, "Bulk generators", bulk_line(r)),
               ("sec", "Waste profile"),
-              ("row", 19, "Meals served per day", dash(r["meals"])),
-              ("row", 20, "Non-veg share of waste", dash(r["nonveg"])),
-              ("row", 21, "Waste includes", ", ".join(r["includes"]) or "—"),
-              ("row", 22, "Segregated at source", dash(r["segregated"])),
-              ("row", 23, "Peak days or times", dash(r["peak"])),
-              ("row", 24, "Bulk generators", dash(r["bulk"])),
+              ("row", 22, "Meals served per day", dash(r["meals"])),
+              ("row", 23, "Non-veg share of waste", dash(r["nonveg"])),
+              ("row", 24, "Waste includes", ", ".join(r["includes"]) or "—"),
+              ("row", 25, "Segregated at source", dash(r["segregated"])),
               ("sec", "Calculated"),
-              ("row", 25, "Waste per meal", per_meal),
-              ("row", 26, "Plant utilisation", util),
+              ("row", 26, "Waste per meal", per_meal),
+              ("row", 27, "Plant utilisation (average day)", util),
+              ("row", 28, "Plant utilisation (peak day)", peak_util),
+              ("row", 29, "Share from bulk generators", bulk_share),
           ]}
-    photos = [(ph.get("caption", "").strip() or ph.get("tag", "") or "Photo", ph.get("path", ""))
-              for ph in r["photos"]]
+    photos = [(photo_label(i, ph), ph.get("path", ""), ph.get("fit") if ph.get("fit") in PHOTO_FITS else "fill")
+              for i, ph in enumerate(r["photos"])]
     p3 = {"title": None, "sub": [],
           "blocks": [("h", "Photographs"), ("photos", photos), ("h", "Recommendation")]
                     + [("p", t) for t in rec_paragraphs(r)]
                     # Approved by stays on the printed report as a blank line for a manager to sign by hand.
-                    + [("sign", [("PREPARED BY", r["prepared_by"].strip(), r["prepared_sig"]),
-                                 ("APPROVED BY", "", None)])]}
+                    + [("sign", [("PREPARED BY", r["prepared_by"].strip(), r["prepared_sig"], r.get("prepared_sig_img", "")),
+                                 ("APPROVED BY", "", None, "")])]}
     return [p1, p2, p3]
 
 
@@ -956,7 +1073,6 @@ MX, CW = 46, 502                  # left margin, content width
 BAND = 80                         # letterhead area at the top of each page
 COLS = (28, 176, 298)             # No. | field | value
 LIMIT = PH - 52                   # content must end above the footer
-BOXH = 118                        # photo box height
 LOGO_BOX = {"avris": (43.5, 15.5, 140.5, 46.0), "chugg": (429.0, 20.5, 122.5, 34.5)}
 
 # ---------------------------------------------------------------- standard letterhead
@@ -1107,30 +1223,33 @@ def layout_report(r):
                     st["y"] += 20
                 for i in range(0, len(items), 2):
                     pair = items[i:i + 2]
-                    caps = [wrap(c, 244, 8.5)[:2] for c, _ in pair]
-                    rowh = BOXH + 4 + max(len(c) for c in caps) * 10.5 + 12
+                    caps = [wrap(c, PHOTO_W, 8.5) for c, _, _ in pair]   # captions wrap in full, never cut
+                    rowh = BOXH + 5 + max(len(c) for c in caps) * 10.5 + 12
                     ensure(rowh)
-                    for j, (cap, path) in enumerate(pair):
-                        x = MX + j * (244 + 14)
-                        add(("rect", x, st["y"], 244, BOXH, CARD, INK, 0.8))
-                        add(("photo", x, st["y"], 244, BOXH, path))
+                    for j, (cap, path, fit) in enumerate(pair):
+                        x = MX + j * (PHOTO_W + 14)
+                        add(("rect", x, st["y"], PHOTO_W, BOXH, CARD, INK, 0.8))
+                        add(("photo", x, st["y"], PHOTO_W, BOXH, path, fit))
+                        add(("rect", x, st["y"], PHOTO_W, BOXH, None, INK, 0.8))   # keyline on top of a filled photo
                         for q, t in enumerate(caps[j]):
-                            add(("text", x, st["y"] + BOXH + 4 + q * 10.5, t, 8.5, False, SLATE, "l"))
+                            add(("text", x, st["y"] + BOXH + 5 + q * 10.5, t, 8.5, False, SLATE, "l"))
                     st["y"] += rowh
             elif k == "sign":
-                yb = max(st["y"] + 24, 723)
-                if yb + 72 > PH - 40:
+                yb = max(st["y"] + 24, 706)
+                if yb + SIG_H + 30 > PH - 44:
                     new_page()
                     yb = st["y"] + 24
-                for j, (lab, name, strokes) in enumerate(b[1]):
+                for j, (lab, name, strokes, img) in enumerate(b[1]):
                     x = MX if j == 0 else MX + 271
-                    wline = 233 if j == 0 else CW - 271
+                    wline = SIG_W if j == 0 else CW - 271
                     add(("text", x, yb, lab, 8, True, SLATE, "l"))
-                    if strokes:
-                        add(("sig", x, yb + 10, wline, 36, strokes))
-                    add(("line", x, yb + 48, x + wline, yb + 48, INK, 0.8))
+                    if img:   # the stored image already has the box's exact proportions
+                        add(("sigimg", x, yb + 10, SIG_W, SIG_H, img))
+                    elif strokes:
+                        add(("sig", x, yb + 10, wline, SIG_H, strokes))
+                    add(("line", x, yb + SIG_H + 12, x + wline, yb + SIG_H + 12, INK, 0.8))
                     if name:
-                        add(("text", x, yb + 53, name, 10.5, True, INK, "l"))
+                        add(("text", x, yb + SIG_H + 17, name, 10.5, True, INK, "l"))
     for i, pg in enumerate(pages):
         pg.extend(letterhead_footer(i + 1))
     return pages
@@ -1280,6 +1399,33 @@ def fit_box(iw, ih, x, y, w, h, pad=3):
     return x + (w - iw * s) / 2, y + (h - ih * s) / 2, iw * s, ih * s
 
 
+def cover_box(iw, ih, x, y, w, h):
+    """Smallest iw:ih rectangle that covers the box, centred (the parts outside are clipped)."""
+    s = max(w / iw, h / ih)
+    return x + (w - iw * s) / 2, y + (h - ih * s) / 2, iw * s, ih * s
+
+
+def cover_crop(iw, ih, w, h):
+    """Share of the image cut from each side (l, t, r, b, 0..1) when it fills a w:h box."""
+    if iw / ih > w / h:
+        k = (1 - (w / h) / (iw / ih)) / 2
+        return k, 0.0, k, 0.0
+    k = (1 - (iw / ih) / (w / h)) / 2
+    return 0.0, k, 0.0, k
+
+
+def sig_img_bytes(data_url):
+    """PNG bytes from the stored signature (a data: URL), or None."""
+    m = re.match(r"^data:image/png;base64,([A-Za-z0-9+/=]+)$", data_url or "")
+    if not m:
+        return None
+    try:
+        b = base64.b64decode(m.group(1))
+    except Exception:
+        return None
+    return b if b[:8] == b"\x89PNG\r\n\x1a\n" else None
+
+
 def sig_points(strokes, x, y, w, h):
     """Map signature strokes (canvas coords) to a box, keeping the aspect ratio, left aligned."""
     pts = [pt for s in strokes for pt in s]
@@ -1320,6 +1466,17 @@ def _pdf_esc(s):
     return s.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
 
 
+def _sig_pdf_img(data_url):
+    b = sig_img_bytes(data_url)
+    if not b:
+        return None
+    try:
+        w, h, rgb = png_decode(b, (255, 255, 255))
+    except Exception:
+        return None
+    return {"w": w, "h": h, "flt": "/FlateDecode", "cs": "/DeviceRGB", "data": zlib.compress(rgb, 6)}
+
+
 def export_pdf(r, path):
     pages = layout_report(r)
     images, order = {}, []   # key -> object number placeholder data
@@ -1357,9 +1514,13 @@ def export_pdf(r, path):
     for prims in pages:
         ops, used = [], []
 
-        def place(key, x, y, w, h):
+        def place(key, x, y, w, h, clip=None):
             used.append(key)
-            ops.append(f"q {w:.2f} 0 0 {h:.2f} {x:.2f} {PH - y - h:.2f} cm /Im{order.index(key)} Do Q")
+            c = ""
+            if clip:
+                cx, cy, cw, ch = clip
+                c = f"{cx:.2f} {PH - cy - ch:.2f} {cw:.2f} {ch:.2f} re W n "
+            ops.append(f"q {c}{w:.2f} 0 0 {h:.2f} {x:.2f} {PH - y - h:.2f} cm /Im{order.index(key)} Do Q")
 
         for p in prims:
             k = p[0]
@@ -1388,10 +1549,18 @@ def export_pdf(r, path):
                 if key == "chugg":  # keep it flush with the right edge of its box
                     bx = x + w - bw
                 place("logo:" + key, bx, by, bw, bh)
-            elif k == "photo":
-                _, x, y, w, h, pth = p
-                im = img_obj("photo:" + pth, photo_loader(pth))
+            elif k == "sigimg":
+                _, x, y, w, h, data = p
+                im = img_obj("sig", lambda: _sig_pdf_img(data))
                 if im:
+                    place("sig", x, y, w, h)
+            elif k == "photo":
+                _, x, y, w, h, pth, fit = (*p, "fill")[:7]
+                im = img_obj("photo:" + pth, photo_loader(pth))
+                if im and fit == "fill":
+                    bx, by, bw, bh = cover_box(im["w"], im["h"], x, y, w, h)
+                    place("photo:" + pth, bx, by, bw, bh, clip=(x, y, w, h))
+                elif im:
                     bx, by, bw, bh = fit_box(im["w"], im["h"], x, y, w, h)
                     place("photo:" + pth, bx, by, bw, bh)
                 else:
@@ -1463,14 +1632,17 @@ def export_docx(r, path):
         store.append((rid, f"media/{name}", IMG_T))
         return rid, counter["img"]
 
-    def drawing(rid, idn, wpt, hpt):
+    def drawing(rid, idn, wpt, hpt, crop=None):
         cx, cy = int(wpt * 12700), int(hpt * 12700)
+        src = ""
+        if crop and any(crop):
+            src = '<a:srcRect l="%d" t="%d" r="%d" b="%d"/>' % tuple(int(round(v * 100000)) for v in crop)
         return (f'<w:r><w:drawing><wp:inline distT="0" distB="0" distL="0" distR="0"><wp:extent cx="{cx}" cy="{cy}"/>'
                 f'<wp:docPr id="{idn}" name="Picture {idn}"/><wp:cNvGraphicFramePr>'
                 f'<a:graphicFrameLocks noChangeAspect="1"/></wp:cNvGraphicFramePr><a:graphic>'
                 f'<a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic>'
                 f'<pic:nvPicPr><pic:cNvPr id="{idn}" name="Picture {idn}"/><pic:cNvPicPr/></pic:nvPicPr>'
-                f'<pic:blipFill><a:blip r:embed="{rid}"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill>'
+                f'<pic:blipFill><a:blip r:embed="{rid}"/>{src}<a:stretch><a:fillRect/></a:stretch></pic:blipFill>'
                 f'<pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="{cx}" cy="{cy}"/></a:xfrm>'
                 f'<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic>'
                 f'</wp:inline></w:drawing></w:r>')
@@ -1552,14 +1724,18 @@ def export_docx(r, path):
                     cells, caps = [], []
                     for j in range(2):
                         if j < len(pair):
-                            cap, pth = pair[j]
+                            cap, pth, fit = pair[j]
                             ph = load_photo(pth)
+                            fw, fh = 232, 174                     # frame inside the cell, 4:3 like the PDF
                             if ph:
                                 data, ext = ((ph["data"], "jpeg") if ph["kind"] == "jpeg"
                                              else (png_encode(ph["w"], ph["h"], ph["data"]), "png"))
-                                _, _, bw, bh = fit_box(ph["w"], ph["h"], 0, 0, 240, BOXH)
                                 rid, idn = add_media(data, ext, doc_rels)
-                                inner = para(drawing(rid, idn + 100, bw, bh), "center")
+                                if fit == "fill":
+                                    inner = para(drawing(rid, idn + 100, fw, fh, cover_crop(ph["w"], ph["h"], fw, fh)), "center")
+                                else:
+                                    _, _, bw, bh = fit_box(ph["w"], ph["h"], 0, 0, fw, fh, 0)
+                                    inner = para(drawing(rid, idn + 100, bw, bh), "center")
                             else:
                                 inner = para(run("PHOTO", True, 16, SLATE[1:]), "center")
                             cells.append(cell(half, inner, valign="center"))
@@ -1570,19 +1746,23 @@ def export_docx(r, path):
                         if j == 0:
                             cells.append(cell(gap, para(""), borders=False))
                             caps.append(cell(gap, para(""), borders=False))
-                    body.append(table([tr(cells, BOXH * 20 + 140), tr(caps)], (half, gap, half)))
+                    body.append(table([tr(cells, 174 * 20 + 200), tr(caps)], (half, gap, half)))
                     body.append(para("", after=80))
             elif k == "sign":
                 wl = 233 * 20
                 gap = CW * 20 - wl - (CW - 271) * 20
                 wr = (CW - 271) * 20
                 labs, sigs, names = [], [], []
-                for j, (lab, name, strokes) in enumerate(b[1]):
+                for j, (lab, name, strokes, img) in enumerate(b[1]):
                     w = wl if j == 0 else wr
                     labs.append(cell(w, para(run(lab, True, 16, SLATE[1:])), borders=False))
-                    if strokes:
-                        rid, idn = add_media(sig_png(strokes, 466, 72), "png", doc_rels)
-                        inner = para(drawing(rid, idn + 100, 233, 36))
+                    sb = sig_img_bytes(img) if img else None
+                    if sb:
+                        rid, idn = add_media(sb, "png", doc_rels)
+                        inner = para(drawing(rid, idn + 100, 221, 221 * SIG_H / SIG_W))
+                    elif strokes:
+                        rid, idn = add_media(sig_png(strokes, 466, 116), "png", doc_rels)
+                        inner = para(drawing(rid, idn + 100, 221, 221 * SIG_H / SIG_W))
                     else:
                         inner = para("")
                     sigs.append(cell(w, inner, valign="bottom", sides=("bottom",)))
@@ -1591,7 +1771,7 @@ def export_docx(r, path):
                         for lst in (labs, sigs, names):
                             lst.append(cell(gap, para(""), borders=False))
                 body.append(para("", before=240))
-                body.append(table([tr(labs), tr(sigs, 800), tr(names)], (wl, gap, wr)))
+                body.append(table([tr(labs), tr(sigs, SIG_H * 20 + 260), tr(names)], (wl, gap, wr)))
         flush()
 
     # header: the standard AVRIS letterhead (ISO badge | name and contacts | AVRIS wordmark, heavy rule below)

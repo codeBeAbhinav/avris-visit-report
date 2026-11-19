@@ -22,7 +22,9 @@ META_KEYS = ("id", "status", "lead_status", "step", "updated")
 EDITABLE = [k for k in TEMPLATE if k not in META_KEYS + ("photos",)]
 CHOICE_FIELDS = {"site_type": core.SITE_TYPES, "op_days": core.OP_DAYS, "nonveg": core.NONVEG,
                  "segregated": core.SEGREGATED, "plant_size": core.PLANT_SIZES, "followup": core.FOLLOWUP}
-MULTI_FIELDS = {"issues": core.ISSUES, "includes": core.INCLUDES}
+MULTI_FIELDS = {"issues": core.ISSUES, "includes": core.INCLUDES, "peak_days": core.PEAK_DAYS,
+                "examples": list(core.EXAMPLES)}
+SIG_IMG_MAX = 700_000   # characters of the data: URL (about 500 KB of PNG)
 CLEAN_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 
 
@@ -81,6 +83,13 @@ def clean_field(key, v):
         return clean_people(v)
     if key == "prepared_sig":
         return clean_signature(v)
+    if key == "prepared_sig_img":
+        v = clean_str(v, SIG_IMG_MAX + 1) if isinstance(v, str) else ""
+        if len(v) > SIG_IMG_MAX:
+            raise BadInput("That signature image is too large.")
+        if v and not core.sig_img_bytes(v):
+            raise BadInput("That signature image could not be read.")
+        return v
     return clean_str(v, 4000)
 
 
@@ -95,8 +104,8 @@ def full(data):
 
 def core_view(r, photos):
     c = dict(r)
-    c["photos"] = [{"path": str(PHOTO_DIR / p["file"]), "caption": p.get("caption", ""), "tag": p.get("tag", "")}
-                   for p in photos]
+    c["photos"] = [{"path": str(PHOTO_DIR / p["file"]), "caption": p.get("caption", ""), "tag": p.get("tag", ""),
+                    "fit": p.get("fit") if p.get("fit") in core.PHOTO_FITS else "fill"} for p in photos]
     return c
 
 
@@ -144,7 +153,9 @@ def meta():
         "includes": core.INCLUDES, "segregated": core.SEGREGATED, "plant_sizes": core.PLANT_SIZES,
         "followup": core.FOLLOWUP, "lead_status": core.LEAD_STATUS, "photo_tags": core.PHOTO_TAGS,
         "steps": core.STEPS, "waste_how_label": core.WASTE_HOW_LABEL, "step_req_msg": core.STEP_REQ_MSG,
-        "rec_p1": core.REC_P1, "rec_p2": core.REC_P2, "org": core.ORG_NAME})
+        "rec_p1": core.REC_P1, "rec_p2": core.REC_P2, "org": core.ORG_NAME, "peak_days": core.PEAK_DAYS,
+        "examples": {k: [v, label, st] for k, (v, label, st) in core.EXAMPLES.items()},
+        "sig_box": [core.SIG_W, core.SIG_H], "photo_box": [core.PHOTO_W, core.BOXH]})
 
 
 def blank(n, prepared_by):
@@ -152,7 +163,11 @@ def blank(n, prepared_by):
     today = date.today()
     fy = core.fy_label(today)
     r = core.new_report(n - 1)
-    r.update(report_no=f"Avris/CHUGG/S.A/{n:03d}/{fy}", visit_date=today.strftime("%d/%m/%Y"), prepared_by=prepared_by)
+    r.update(report_no=f"Avris/CHUGG/S.A/{n:03d}/{fy}", visit_date=today.strftime("%d/%m/%Y"),
+             prepared_by=core.cap_words(prepared_by))
+    for k, (v, _, _) in core.EXAMPLES.items():   # example amounts, each flagged until changed or confirmed
+        r[k] = v
+    r["examples"] = list(core.EXAMPLES)
     data = {k: v for k, v in r.items() if k not in META_KEYS}
     return json.dumps({"fy": fy, "data": data})
 
@@ -160,13 +175,27 @@ def blank(n, prepared_by):
 def apply_fields(data_json, fields_json):
     r = full(json.loads(data_json))
     changed = []
-    for k, v in json.loads(fields_json).items():
+    fields = json.loads(fields_json)
+    for k, v in fields.items():
         if k not in EDITABLE:
             raise BadInput(f"unknown field: {k}")
         nv = clean_field(k, v)
         if r[k] != nv:
             r[k] = nv
             changed.append(k)
+    # an example amount stops being an example once someone types over it
+    if "examples" not in fields:
+        left = [k for k in r["examples"] if k not in changed]
+        if left != r["examples"]:
+            r["examples"] = left
+            changed.append("examples")
+    return json.dumps({"data": r, "changed": changed})
+
+
+def tidy(data_json):
+    """Capitalisation rules applied when a report is generated."""
+    r = full(json.loads(data_json))
+    changed = core.tidy_caps(r)
     return json.dumps({"data": r, "changed": changed})
 
 
@@ -191,7 +220,9 @@ def layout(data_json, photos_json):
         out = []
         for p in prims:
             if p[0] == "photo":
-                out.append(["photo", *p[1:5], files.get(p[5])])
+                out.append(["photo", *p[1:5], files.get(p[5]), p[6] if len(p) > 6 else "fill"])
+            elif p[0] == "sigimg":
+                out.append(["sigimg", *p[1:5]])     # the page draws R.prepared_sig_img into this box
             elif p[0] == "sig":
                 _, x, y, w, h, strokes = p
                 out.append(["sig", [[list(pt) for pt in st] for st in core.sig_points(strokes, x, y, w, h)]])

@@ -121,7 +121,7 @@
   // ---------------------------------------------------------------- report helpers
   const fyOf = (d = new Date()) => { const y = d.getMonth() >= 3 ? d.getFullYear() : d.getFullYear() - 1; return `${String(y % 100).padStart(2, '0')}-${String((y + 1) % 100).padStart(2, '0')}`; };
   const dataOf = (rec) => JSON.stringify(rec.data);
-  const photosOf = (rec) => JSON.stringify(rec.photos.map((p) => ({ file: p.file, caption: p.caption, tag: p.tag })));
+  const photosOf = (rec) => JSON.stringify(rec.photos.map((p) => ({ file: p.file, caption: p.caption, tag: p.tag, fit: p.fit || 'fill' })));
 
   function logEvent(rec, who, action, detail = '', merge = false) {
     const last = rec.events[rec.events.length - 1];
@@ -161,7 +161,7 @@
     const d = await pyJson('derive', [dataOf(rec), photosOf(rec)]);
     const out = { ...rec.data, ...summary(rec) };
     out.size = d.size; out.missing_count = d.missing_count;
-    out.photos = rec.photos.map((p) => ({ file: p.file, caption: p.caption, tag: p.tag }));
+    out.photos = rec.photos.map((p) => ({ file: p.file, caption: p.caption, tag: p.tag, fit: p.fit || 'fill' }));
     out.missing = d.missing; out.recommendation = d.recommendation; out.followup_open = d.followup_open;
     out.summary_rows = d.summary_rows; out.lead_rows = d.lead_rows; out.email_subject = d.email_subject || '';
     out.can_edit = rec.status === 'draft' && !rec.deleted_at;
@@ -452,6 +452,8 @@
       }
       if (act === 'send' && method === 'POST') {
         const bad = needEditable(rec); if (bad) return bad;
+        const tidied = await pyJson('tidy', [dataOf(rec)]);   // capital letters on names, places and sentences
+        if (tidied.changed.length) { rec.data = tidied.data; logEvent(rec, who, 'capitalisation tidied', tidied.changed.join(', ')); }
         const d = await pyJson('derive', [dataOf(rec), photosOf(rec)]);
         if (d.missing.length) return E('Some required details are still missing.', 400, { missing: d.missing });
         if (window.AvrisCloud.enabled()) {
@@ -508,9 +510,10 @@
         if (buf.byteLength > MAX_PHOTO_BYTES) return E('That photo is too large.');
         const kind = sniff(buf);
         if (!kind) return E('That file is not a supported image. Please use a JPEG or PNG photo.');
-        added.push({ file: `${uuid()}.${kind}`, blob: new Blob([buf], { type: kind === 'jpg' ? 'image/jpeg' : 'image/png' }) });
+        const fit = body instanceof FormData && ['fill', 'whole'].includes(String(body.get('fit'))) ? String(body.get('fit')) : 'fill';
+        added.push({ file: `${uuid()}.${kind}`, fit, blob: new Blob([buf], { type: kind === 'jpg' ? 'image/jpeg' : 'image/png' }) });
       }
-      for (const a of added) { await putPhoto(rec.id, a.file, a.blob); rec.photos.push({ file: a.file, caption: '', tag: '' }); }
+      for (const a of added) { await putPhoto(rec.id, a.file, a.blob); rec.photos.push({ file: a.file, caption: '', tag: '', fit: a.fit }); }
       logEvent(rec, who, 'photo added', String(added.length));
       await touch(rec, who);
       return J({ report: await reportOut(rec) });
@@ -528,6 +531,8 @@
         const tag = String((body || {}).tag ?? ph.tag);
         const meta = await pyJson('meta');
         ph.tag = tag && meta.photo_tags.includes(tag) ? tag : '';
+        const fit = String((body || {}).fit ?? ph.fit ?? 'fill');
+        ph.fit = fit === 'whole' ? 'whole' : 'fill';
         await touch(rec, who);
         return J({ ok: true });
       }
@@ -549,7 +554,7 @@
       if (!recs.length) return E('There are no reports to download.', 404);
       const items = []; const photos = {};
       for (const r of recs.slice(0, 100)) {
-        items.push({ data: r.data, photos: r.photos.map((x) => ({ file: x.file, caption: x.caption, tag: x.tag })), status: r.status,
+        items.push({ data: r.data, photos: r.photos.map((x) => ({ file: x.file, caption: x.caption, tag: x.tag, fit: x.fit || 'fill' })), status: r.status,
           lead_status: r.lead_status, sent_at: r.sent_at, updated: r.updated, updated_by: r.updated_by });
         if (m[1] === 'zip') for (const [k, v] of Object.entries(await photoMap(r))) photos[k] = v;
       }

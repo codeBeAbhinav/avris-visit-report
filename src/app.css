@@ -119,11 +119,20 @@ body.dark .progress i { border-color: var(--green); }
 body.dark .progress i.on { background: var(--green); }
 
 /* photos */
-.photos { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-.photo .frame { height: 127px; background: var(--card); border: 2px solid var(--ink); display: flex; align-items: center; justify-content: center; overflow: hidden; }
-.photo .frame img { max-width: 100%; max-height: 100%; display: block; }
-.photo .cap { margin-top: 6px; }
-.addphoto { height: 127px; border: 2px dashed var(--ink); background: var(--card); display: flex; flex-direction: column; align-items: center; justify-content: center; cursor: pointer; font-size: 14px; color: var(--slate); }
+.photos { display: grid; grid-template-columns: 1fr; gap: 18px; }
+@media (min-width: 520px) { .photos { grid-template-columns: 1fr 1fr; gap: 14px; } }
+.photo .frame { width: 100%; height: auto; padding: 0; background: var(--card); border: 2px solid var(--ink); display: block; overflow: hidden; cursor: zoom-in; position: relative; }
+.photo .frame img { width: 100%; height: 100%; display: block; object-fit: cover; object-position: 50% 50%; }
+.photo .frame.fit-whole img { object-fit: contain; padding: 1.2%; }
+.photo .phhead { margin-bottom: 6px; align-items: center; }
+.photo .fitchips { margin-top: 6px; }
+.photo .phwarn:not(:empty) { margin-top: 6px; border: 2px solid var(--red); background: var(--card); color: var(--red); font-size: 12px; font-weight: 700; padding: 6px 8px; }
+.photo .phwarn div + div { margin-top: 4px; }
+.photo .cap { margin-top: 6px; position: relative; }
+.photo .capta { display: block; width: 100%; border: 0; padding: 8px 8px 18px; font: inherit; font-size: 14px; line-height: 1.35; background: transparent; color: var(--ink);
+  resize: none; overflow: hidden; white-space: pre-wrap; overflow-wrap: anywhere; min-height: 40px; }
+.photo .capcount { position: absolute; right: 6px; bottom: 3px; font-size: 10px; color: var(--slate); }
+.addphoto { height: auto; min-height: 120px; border: 2px dashed var(--ink); background: var(--card); display: flex; flex-direction: column; align-items: center; justify-content: center; cursor: pointer; font-size: 14px; color: var(--slate); }
 .addphoto b { font-size: 28px; color: var(--ink); line-height: 1; }
 
 /* signature */
@@ -416,7 +425,7 @@ button.seg i { transition: transform .16s var(--ease), background-color .3s; }
   .home-tools { flex-direction: row; align-items: center; flex-wrap: wrap; gap: 14px; }
   .home-tools .chips { margin-top: 0 !important; }
   .home-tools input { flex: 1; min-width: 240px; width: auto !important; }
-  .photos { grid-template-columns: repeat(3, 1fr); }
+  .photos { grid-template-columns: repeat(2, 1fr); }   /* two across keeps each photo legible */
   .modal-actions .btn { height: 50px; }
 }
 @media (min-width: 900px) {
@@ -434,7 +443,7 @@ button.seg i { transition: transform .16s var(--ease), background-color .3s; }
   .screen.has-aside .col-main { max-width: 680px; }
   .col-side { display: block; }
   .screen.has-aside > header { padding-right: calc(40px + 340px + 40px); }
-  .photos { grid-template-columns: repeat(4, 1fr); }
+  .photos { grid-template-columns: repeat(2, minmax(0, 340px)); }
   h1 { font-size: 36px; }
 }
 @media (min-width: 1024px) and (min-height: 620px) {
@@ -455,3 +464,60 @@ button.seg i { transition: transform .16s var(--ease), background-color .3s; }
 .screen.enter .lead-grid > div > *:nth-child(2) { animation-delay: .12s; }
 .screen.enter .lead-grid > div > *:nth-child(n+3) { animation-delay: .2s; }
 .screen.enter .col-side { animation: in-fade .5s var(--ease) .15s both; }
+
+/* ---------------------------------------------------------------- tap all that apply */
+.multiwrap .mbar { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-bottom: 8px; font-size: 12px; }
+.multiwrap .mcount { font-weight: 700; color: var(--slate); margin-right: auto; }
+body.dark .multiwrap .mcount { color: var(--gold); }
+.linkbtn { border: 0; background: none; padding: 2px 0; font: inherit; font-size: 12px; font-weight: 700; color: var(--ink); text-decoration: underline; cursor: pointer; }
+body.dark .linkbtn { color: #fff; }
+.chips.multi .chip { display: inline-flex; align-items: center; gap: 7px; }
+.chips.multi .tick { width: 15px; height: 15px; border: 1.5px solid var(--ink); background: #fff; flex: none; position: relative; }
+.chips.multi .chip.on .tick { background: var(--ink); }
+.chips.multi .chip.on .tick::after { content: ""; position: absolute; left: 4px; top: 1px; width: 4px; height: 8px; border: solid var(--green); border-width: 0 2px 2px 0; transform: rotate(45deg); }
+
+/* ---------------------------------------------------------------- example amounts */
+.fwrap .exrow:empty { display: none; }
+.fwrap .exrow { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 5px; font-size: 12px; color: var(--slate); }
+.fwrap .extag { background: var(--ink); color: var(--ground); font-size: 10px; font-weight: 700; letter-spacing: .08em; padding: 2px 6px; }
+.fwrap .extxt { flex: 1; min-width: 140px; }
+.fwrap.is-example .box { border-style: dashed; background: #fffbea; }
+.fwrap.is-example .box input, .fwrap.is-example .box textarea { color: #6b7280; }
+.notice.exbar { font-weight: 400; background: #fffbea; }
+
+/* ---------------------------------------------------------------- calculated lines and subheads */
+.subhead { font-size: 12px; font-weight: 700; letter-spacing: .08em; border-bottom: 2px solid var(--ink); padding-bottom: 4px; margin-top: 8px; }
+.calc:not(.on) { display: none; }
+.calc { border: 2px solid var(--ink); background: var(--card); padding: 10px 12px; font-size: 14px; }
+.calc .tl { display: block; font-size: 10px; font-weight: 700; letter-spacing: .08em; color: var(--slate); margin-bottom: 4px; }
+.calc-l + .calc-l { margin-top: 4px; }
+.calc-l.warn { color: var(--red); font-weight: 700; }
+
+/* ---------------------------------------------------------------- recommendation: fixed text */
+.lockcard { background: #eceef1; border: 2px dashed var(--slate); padding: 12px 14px; color: #374151; user-select: text; }
+.lockhead { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+.lockchip { display: inline-flex; align-items: center; gap: 6px; background: var(--slate); color: #fff; font-size: 10px; font-weight: 700; letter-spacing: .08em; padding: 3px 8px; }
+.lockchip svg { flex: none; }
+.locknum { font-size: 11px; color: var(--slate); font-weight: 700; }
+.lockp { margin: 0; font-size: 15px; line-height: 1.45; }
+.yourline .field .box { border-width: 3px; }
+
+/* ---------------------------------------------------------------- signature */
+.sigfield .chips { margin-bottom: 10px; }
+.sigprev { background: var(--card); color: var(--ink); border: 2px solid var(--ink); padding: 14px 16px 12px; max-width: 520px; }
+.sigprev .sp-lab { display: block; font-size: 10px; font-weight: 700; letter-spacing: .08em; color: var(--slate); margin-bottom: 4px; }
+.sigbox { display: block; width: 100%; height: auto; background: #fff; outline: 1px dashed #9ca3af; outline-offset: 0; touch-action: none; }
+.sigbox.drawing { cursor: crosshair; outline: 2px dashed var(--ink); }
+.sigprev .sp-line { border-top: 1.5px solid var(--ink); margin-top: 2px; }
+.sigprev .sp-name { font-weight: 700; font-size: 15px; margin-top: 4px; }
+.sigprev .sp-name.empty { color: #9ca3af; font-weight: 400; }
+.sp-note { margin-top: 8px; }
+.sp-msg { font-size: 13px; margin-top: 4px; }
+.sp-msg.err { background: var(--card); color: var(--red); border: 2px solid var(--red); padding: 8px 10px; font-weight: 700; }
+.sp-msg.warn { background: var(--ground); color: var(--ink); border: 2px solid var(--ink); padding: 8px 10px; font-weight: 700; }
+.sp-controls { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 10px; }
+.sp-controls .btn { flex: none; height: 40px; padding: 0 14px; }
+.sp-rules { margin-top: 12px; font-size: 13px; }
+.sp-rules summary { cursor: pointer; font-weight: 700; }
+.sp-rules ul { margin: 8px 0 0; padding-left: 18px; }
+.sp-rules li + li { margin-top: 4px; }

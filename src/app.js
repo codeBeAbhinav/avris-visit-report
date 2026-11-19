@@ -183,7 +183,7 @@
     const rid = R && R.id;
     const p = R && R.photos.find((x) => x.file === file);
     if (!p) return;
-    try { await api('PUT', `/api/reports/${rid}/photos/${file}`, { caption: p.caption, tag: p.tag }); }
+    try { await api('PUT', `/api/reports/${rid}/photos/${file}`, { caption: p.caption, tag: p.tag, fit: p.fit || 'fill' }); }
     catch (e) { toast(e.message, 'err'); }
   }
   function queuePhotoMeta(file) {
@@ -222,7 +222,7 @@
     for (const k of Object.keys(report)) {
       if (!force && (k in SV.pending || (SV.sending && k in SV.sending))) continue;   // my unsent edits win
       if (k === 'photos') {
-        report.photos.forEach((sp) => { const lp = R.photos.find((x) => x.file === sp.file); if (lp && PH_DIRTY.has(sp.file)) { sp.caption = lp.caption; sp.tag = lp.tag; } });
+        report.photos.forEach((sp) => { const lp = R.photos.find((x) => x.file === sp.file); if (lp && PH_DIRTY.has(sp.file)) { sp.caption = lp.caption; sp.tag = lp.tag; sp.fit = lp.fit; } });
       }
       if (JSON.stringify(R[k]) !== JSON.stringify(report[k])) { R[k] = report[k]; keys.push(k); }
     }
@@ -509,35 +509,104 @@
     return el;
   }
 
+  // capital letters: the same rules the engine applies when a report is generated
+  const SMALL_WORDS = new Set(['of', 'and', 'the', 'for', 'at', 'in', 'on', 'by', 'to', 'a', 'an', '&']);
+  function capWords(s) {
+    let first = true;
+    return String(s || '').split(/(\s+)/).map((tok) => {
+      if (!tok || /^\s+$/.test(tok)) return tok;
+      const m = /^([^A-Za-z0-9]*)([a-z][a-z'\u2019.-]*)(.*)$/.exec(tok);
+      const wasFirst = first; first = false;
+      if (m && tok === tok.toLowerCase() && !tok.includes('@') && !(!wasFirst && SMALL_WORDS.has(m[2]))) return m[1] + m[2][0].toUpperCase() + m[2].slice(1) + m[3];
+      return tok;
+    }).join('');
+  }
+  const capSentences = (s) => String(s || '').replace(/(^|[.!?]\s+|\n\s*)([a-z])/g, (_, a, b) => a + b.toUpperCase()).replace(/\bi\b(?=[\s'\u2019,.!?]|$)/g, 'I');
+  const CAPS = { words: capWords, sentences: capSentences, lower: (s) => String(s || '').trim().toLowerCase() };
+  const CAP_OF = { customer: 'words', address: 'words', prepared_by: 'words', issues_text: 'sentences', existing_system: 'sentences', waste_how: 'sentences',
+    peak: 'sentences', bulk: 'sentences', route: 'sentences', rec_extra: 'sentences', followup_when: 'sentences', remarks: 'sentences' };
+
   function fieldEl(label, o) {
-    const input = h(o.multi ? 'textarea' : 'input', { rows: o.multi ? 3 : null, type: o.multi ? null : (o.type || 'text'), inputmode: o.inputmode, placeholder: o.ph, autocomplete: 'off', spellcheck: o.spell ? 'true' : null, maxlength: 4000, readonly: o.readonly ? 'readonly' : null });
+    const input = h(o.multi ? 'textarea' : 'input', { rows: o.multi ? 3 : null, type: o.multi ? null : (o.type || 'text'), inputmode: o.inputmode, placeholder: o.ph, autocomplete: 'off', spellcheck: o.spell ? 'true' : null, maxlength: o.max || 4000, readonly: o.readonly ? 'readonly' : null,
+      autocapitalize: o.cap === 'words' ? 'words' : o.cap === 'sentences' ? 'sentences' : o.cap === 'lower' ? 'off' : null });
     input.value = o.get() || '';
     input.addEventListener('input', () => { o.set(input.value); if (o.onInput) o.onInput(); });
+    if (o.cap && CAPS[o.cap]) {   // tidy capital letters when the person leaves the field
+      input.addEventListener('change', () => {
+        const v = CAPS[o.cap](input.value);
+        if (v !== input.value) { input.value = v; o.set(v); if (o.onInput) o.onInput(); }
+      });
+    }
     return { el: h('label', { class: 'field' }, h('span', { class: 'label' }, label), h('div', { class: 'box' }, input)), input };
   }
+  // example amounts: pre-filled on a new report and marked until someone types over them or keeps them
+  const isEx = (key) => !!(R && (R.examples || []).includes(key));
+  function keepExamples(keys) {
+    R.examples = (R.examples || []).filter((k) => !keys.includes(k));
+    setField('examples', R.examples);
+    fieldRegs.forEach((reg) => { if (reg.paintEx) reg.paintEx(); });
+    if (S.onExamples) S.onExamples();
+    refreshSide();
+  }
   function F(key, label, o = {}) {
-    const { el, input } = fieldEl(label, { ...o, get: () => R[key], set: (v) => setField(key, v) });
-    fieldRegs.set(key, { el: input, sync: () => { input.value = R[key] || ''; } });
-    return el;
+    const exRow = h('div', { class: 'exrow' });
+    let wrapEl = null;
+    const paintEx = () => {
+      const on = isEx(key);
+      if (wrapEl) wrapEl.classList.toggle('is-example', on);
+      exRow.replaceChildren(...(on ? [h('span', { class: 'extag' }, 'EXAMPLE'),
+        h('span', { class: 'extxt' }, 'Type the real figure, or keep it if it is right.'),
+        h('button', { type: 'button', class: 'chip tiny', onclick: () => keepExamples([key]) }, 'Keep')] : []));
+    };
+    const { el, input } = fieldEl(label, { cap: CAP_OF[key], ...o, get: () => R[key], set: (v) => {
+      if (isEx(key)) { R.examples = R.examples.filter((k) => k !== key); paintEx(); if (S.onExamples) S.onExamples(); }   // the engine drops it too
+      setField(key, v);
+    } });
+    wrapEl = h('div', { class: 'fwrap' }, el, exRow);
+    paintEx();
+    fieldRegs.set(key, { el: input, sync: () => { input.value = R[key] || ''; paintEx(); }, paintEx });
+    return wrapEl;
+  }
+  function exampleBar(step) {
+    const keys = () => Object.entries(S.meta.examples || {}).filter(([k, v]) => v[2] === step && isEx(k)).map(([k]) => k);
+    const box = h('div');
+    const paint = () => {
+      const k = keys();
+      box.replaceChildren(...(k.length ? [h('div', { class: 'notice exbar', style: 'margin:0' },
+        h('div', null, `${k.length} example amount${k.length === 1 ? '' : 's'} on this step, marked EXAMPLE. Replace ${k.length === 1 ? 'it' : 'them'} with the real figure${k.length === 1 ? '' : 's'} from the site, or keep any that are right. The report cannot be generated until each one is checked.`),
+        h('div', { style: 'margin-top:8px' }, h('button', { type: 'button', class: 'chip tiny', onclick: () => keepExamples(k) }, `Keep all ${k.length} as they are`)))] : []));
+    };
+    S.onExamples = paint;
+    paint();
+    return box;
   }
   function PF(i, key, label, ph, o = {}) {
-    return fieldEl(label, { ph, ...o, get: () => R.people[i][key], set: (v) => { R.people[i][key] = v; setField('people', R.people); } }).el;
+    const cap = o.cap || (key === 'name' || key === 'designation' ? 'words' : key === 'email' ? 'lower' : null);
+    return fieldEl(label, { ph, cap, ...o, get: () => R.people[i][key], set: (v) => { R.people[i][key] = v; setField('people', R.people); } }).el;
   }
   function chips(opts, key, o = {}) {
-    const wrap = h('div', { class: 'chips' + (o.small ? ' small' : '') });
+    const wrap = h('div', { class: 'chips' + (o.small ? ' small' : '') + (o.multi ? ' multi' : ''), role: 'group' });
     const btns = new Map();
-    const on = (v) => (o.multi ? R[key].includes(v) : R[key] === v);
-    const paint = () => btns.forEach((b, v) => { b.classList.toggle('on', on(v)); b.setAttribute('aria-pressed', on(v)); });
+    const count = o.multi ? h('span', { class: 'mcount' }) : null;
+    const on = (v) => (o.multi ? (R[key] || []).includes(v) : R[key] === v);
+    const paint = () => {
+      btns.forEach((b, v) => { b.classList.toggle('on', on(v)); b.setAttribute('aria-pressed', on(v)); });
+      if (count) { const n = (R[key] || []).length; count.textContent = n ? `${n} of ${opts.length} selected` : `None selected yet · ${opts.length} options`; }
+    };
+    const put = (nv) => { setField(key, nv); paint(); if (o.onChange) o.onChange(); };
     opts.forEach((v) => {
       const b = h('button', { type: 'button', class: 'chip', onclick: () => {
-        const nv = o.multi ? (on(v) ? R[key].filter((x) => x !== v) : [...R[key], v]).sort((a, c) => opts.indexOf(a) - opts.indexOf(c)) : (R[key] === v ? '' : v);
-        setField(key, nv); paint(); if (o.onChange) o.onChange();
-      } }, v);
+        put(o.multi ? (on(v) ? R[key].filter((x) => x !== v) : [...(R[key] || []), v]).sort((a, c) => opts.indexOf(a) - opts.indexOf(c)) : (R[key] === v ? '' : v));
+      } }, o.multi ? h('span', { class: 'tick', 'aria-hidden': 'true' }) : null, v);
       btns.set(v, b); wrap.append(b);
     });
     fieldRegs.set(key, { el: wrap, sync: () => { paint(); if (o.onChange) o.onChange(true); } });
     paint();
-    return wrap;
+    if (!o.multi) return wrap;
+    const bar = h('div', { class: 'mbar' }, count,
+      h('button', { type: 'button', class: 'linkbtn', onclick: () => put([...opts]) }, 'Select all'),
+      h('button', { type: 'button', class: 'linkbtn', onclick: () => put([]) }, 'Clear'));
+    return h('div', { class: 'multiwrap' }, bar, wrap);
   }
   const group = (label, node) => h('div', { class: 'group' }, h('span', { class: 'label' }, label), node);
   const cols = (...c) => h('div', { class: 'cols' }, c);
@@ -568,9 +637,9 @@
     const go = () => {
       const v = val.trim();
       if (!v) { toast('Please enter your name.', 'err'); return; }
-      ID.name = v.slice(0, 60); LS.set('avris.name', ID.name); after();
+      ID.name = capWords(v).slice(0, 60); LS.set('avris.name', ID.name); after();
     };
-    const f = fieldEl('YOUR NAME', { ph: 'e.g. Priya Nair', get: () => val, set: (v) => { val = v; } });
+    const f = fieldEl('YOUR NAME', { ph: 'e.g. Priya Nair', cap: 'words', get: () => val, set: (v) => { val = v; } });
     f.input.addEventListener('keydown', (e) => { if (e.key === 'Enter') go(); });
     screen({
       header: [tag(['AVRIS', true], ['Visit report', false]), ...title('Who is filling this in?', 'Your name is filled in as Prepared by on new reports. You only set it once on this device.')],
@@ -643,7 +712,7 @@
   function showMe() {
     S.screen = 'me';
     let val = ID.name;
-    const f = fieldEl('YOUR NAME', { get: () => val, set: (v) => { val = v; } });
+    const f = fieldEl('YOUR NAME', { cap: 'words', get: () => val, set: (v) => { val = v; } });
     const pick = h('input', { type: 'file', accept: 'application/json,.json', class: 'hidden', onchange: async () => {
       const file = pick.files && pick.files[0];
       if (!file) return;
@@ -656,7 +725,7 @@
     screen({
       header: [tag(['Settings', true]), ...title('You', 'Your name is filled in as Prepared by on new reports and shown in the change history.')],
       body: h('div', { class: 'stack' }, f.el,
-        btn('Save name', 'primary', () => { const v = val.trim(); if (!v) return; ID.name = v.slice(0, 60); LS.set('avris.name', ID.name); toast('Saved', 'ok'); }),
+        btn('Save name', 'primary', () => { const v = val.trim(); if (!v) return; ID.name = capWords(v).slice(0, 60); LS.set('avris.name', ID.name); toast('Saved', 'ok'); }),
         group('GOOGLE DRIVE', cloudGroup()),
         group('AVRIS TEAM EMAIL', teamGroup()),
         group('BACKUP', h('div', { class: 'stack' },
@@ -770,7 +839,7 @@
   const STEP_FN = () => [step1, step2, step3, step4, step5, step6, step7, step8, step9, step10, step11];
   function renderStep(keep) {
     const n = S.step, dark = n === 10;
-    fieldRegs.clear(); S.onDerived = null; SV.after = null; S.dirtyRender = false;
+    fieldRegs.clear(); S.onDerived = null; SV.after = null; S.dirtyRender = false; S.onName = null;
     const [stepTitle, hint] = S.meta.steps[n];
     const prog = h('div', { class: 'progress', 'aria-hidden': 'true' }, S.meta.steps.map((_, i) => h('i', { class: i <= n ? 'on' : '' })));
     const header = [
@@ -778,7 +847,9 @@
       ...title(stepTitle, hint),
       h('div', { id: 'presence', class: 'presence' }),
     ];
-    const body = h('div', { class: 'stack' }, STEP_FN()[n]());
+    S.onExamples = null;
+    const body = h('div', { class: 'stack' }, exampleBar(n), STEP_FN()[n]());
+    fieldRegs.set('examples', { el: document.createElement('i'), sync() { fieldRegs.forEach((reg) => { if (reg.paintEx) reg.paintEx(); }); if (S.onExamples) S.onExamples(); } });
     const footer = [btn('Home', '', goHome, { fixed: true, w: 84 })];
     if (n) footer.push(btn('Back', '', () => goStep(n - 1), { fixed: true, w: 84 }));
     if (n === 10) footer.push(btn('Generate report', 'send', sendReport, { disabled: R.missing.length > 0, title: missingTitle() }));
@@ -824,37 +895,99 @@
     group('OPERATING DAYS PER WEEK *', chips(S.meta.op_days, 'op_days')),
   ];
   const step4 = () => [
-    group('TAP WHAT APPLIES', chips(S.meta.issues, 'issues', { multi: true })),
+    group('PRESENT ISSUES (TAP ALL THAT APPLY)', chips(S.meta.issues, 'issues', { multi: true })),
     F('issues_text', 'PRESENT ISSUES IN WASTE DISPOSAL', { ph: 'In your own words', multi: true, spell: true }),
     F('existing_system', 'EXISTING WASTE DISPOSAL SYSTEM *', { ph: 'Who collects, how often, where it goes', multi: true, spell: true }),
   ];
-  const step5 = () => [
-    F('waste_kg', 'WASTE PER DAY (KG) *', { ph: 'e.g. 120', inputmode: 'decimal' }),
-    F('waste_how', S.meta.waste_how_label.toUpperCase() + ' *', { ph: 'Kitchen log, weighed, estimated…', multi: true, spell: true }),
-    h('p', { class: 'hint' }, 'Add pictures of the waste in the Photos step.'),
-  ];
+  function step5() {
+    const calc = h('div', { class: 'calc' });
+    const refresh = () => {
+      const kg = num(R.waste_kg), pk = num(R.peak_kg), bk = num(R.bulk_kg), size = effSize(R), cap = sizeCap(size);
+      const lines = [];
+      if (kg && pk) lines.push(pk < kg ? ['warn', `Peak-day waste (${pk} kg) is lower than the average day (${kg} kg). Check both figures.`] : ['', `A peak day is ${Math.round((pk / kg) * 100)}% of an average day.`]);
+      if (pk && cap) lines.push([pk > cap ? 'warn' : '', `On a peak day ${size} runs at ${Math.round((pk / cap) * 100)}% of its ${cap} kg/day capacity.${pk > cap ? ' That is over capacity.' : ''}`]);
+      if (kg && bk) lines.push(bk > kg ? ['warn', `Bulk generators (${bk} kg) cannot be more than the whole day's waste (${kg} kg).`] : ['', `Bulk generators make up ${Math.round((bk / kg) * 100)}% of the daily waste.`]);
+      calc.replaceChildren(...(lines.length ? [h('span', { class: 'tl' }, 'CALCULATED'), ...lines.map(([k, t]) => h('div', { class: 'calc-l' + (k ? ' ' + k : '') }, t))] : []));
+      calc.classList.toggle('on', lines.length > 0);
+    };
+    S.onDerived = refresh;
+    setTimeout(refresh, 0);
+    const sub = (t) => h('div', { class: 'subhead' }, t);
+    return [
+      sub('AVERAGE DAY'),
+      F('waste_kg', 'WASTE PER DAY, AVERAGE (KG) *', { ph: 'e.g. 120', inputmode: 'decimal', onInput: refresh }),
+      F('waste_how', S.meta.waste_how_label.toUpperCase() + ' *', { ph: 'e.g. Kitchen staff weighed three days of bins: 110, 118 and 132 kg', multi: true, spell: true }),
+      sub('PEAK DAYS AND TIMES'),
+      group('BUSIEST DAYS (TAP ALL THAT APPLY)', chips(S.meta.peak_days, 'peak_days', { multi: true })),
+      F('peak_kg', 'WASTE ON A PEAK DAY (KG)', { ph: 'e.g. 160', inputmode: 'decimal', onInput: refresh }),
+      F('peak', 'PEAK TIMES OR NOTES', { ph: 'e.g. Lunch, 12 to 2 pm. Wedding season roughly doubles the waste.', multi: true, spell: true }),
+      sub('BULK GENERATORS'),
+      F('bulk', 'BULK GENERATORS ON SITE', { ph: 'e.g. Banquet hall and hostel mess', multi: true, spell: true }),
+      F('bulk_kg', 'OF THE DAILY WASTE, FROM BULK GENERATORS (KG)', { ph: 'e.g. 40', inputmode: 'decimal', onInput: refresh }),
+      calc,
+      h('p', { class: 'hint' }, 'Add pictures of the waste in the Photos step.'),
+    ];
+  }
   const step6 = () => [
     F('meals', 'MEALS SERVED PER DAY *', { ph: 'e.g. 900', inputmode: 'numeric' }),
     group('NON-VEG SHARE OF WASTE *', chips(S.meta.nonveg, 'nonveg')),
     group('WHAT THE WASTE INCLUDES * (TAP ALL THAT APPLY)', chips(S.meta.includes, 'includes', { multi: true })),
     group('SEGREGATED AT SOURCE? *', chips(S.meta.segregated, 'segregated')),
-    F('peak', 'PEAK DAYS OR TIMES', { ph: 'Weekends, festival season' }),
-    F('bulk', 'BULK GENERATORS', { ph: 'Banquet halls, hostel mess', multi: true }),
   ];
-  const step7 = () => [
-    cols(F('plant_l', 'PLANT SPACE LENGTH (FT) *', { ph: 'e.g. 20', inputmode: 'decimal' }), F('plant_w', 'PLANT SPACE WIDTH (FT) *', { ph: 'e.g. 12', inputmode: 'decimal' })),
-    F('dist', 'DISTANCE FROM SITE TO KITCHEN (M) *', { ph: 'e.g. 35', inputmode: 'decimal' }),
-  ];
+  function step7() {
+    const calc = h('div', { class: 'calc' });
+    const refresh = () => {
+      const l = num(R.plant_l), w = num(R.plant_w), d = num(R.dist);
+      const lines = [];
+      if (l && w) lines.push(`Clear floor area: ${l} × ${w} ft = ${Math.round(l * w)} sq ft (about ${(l * w * 0.0929).toFixed(1)} m²).`);
+      if (d) lines.push(`Bins travel ${d} m each way from the kitchen to the plant spot.`);
+      calc.replaceChildren(...(lines.length ? [h('span', { class: 'tl' }, 'CALCULATED'), ...lines.map((t) => h('div', { class: 'calc-l' }, t))] : []));
+      calc.classList.toggle('on', lines.length > 0);
+    };
+    setTimeout(refresh, 0);
+    const sub = (t) => h('div', { class: 'subhead' }, t);
+    return [
+      sub('PLANT SPACE'),
+      h('p', { class: 'hint', style: 'margin:0' }, 'Measure the clear, level floor where the plant would stand, in feet, with a tape. Leave out drains, pillars and doors that swing into the space. Example: an open paved area beside the service gate, 20 ft long and 12 ft wide.'),
+      cols(F('plant_l', 'PLANT SPACE LENGTH (FT) *', { ph: 'e.g. 20', inputmode: 'decimal', onInput: refresh }), F('plant_w', 'PLANT SPACE WIDTH (FT) *', { ph: 'e.g. 12', inputmode: 'decimal', onInput: refresh })),
+      sub('ROUTE FROM THE KITCHEN'),
+      h('p', { class: 'hint', style: 'margin:0' }, 'Walk the route the waste bins would take, from the kitchen door to the plant spot, and count it in metres. Example: 35 m along the service corridor, through one door and down a ramp.'),
+      F('dist', 'WALKING DISTANCE, KITCHEN TO PLANT SPOT (M) *', { ph: 'e.g. 35', inputmode: 'decimal', onInput: refresh }),
+      F('route', 'WHAT THE ROUTE IS LIKE', { ph: 'e.g. Level service corridor, one ramp, no steps. Bins go by trolley.', multi: true, spell: true }),
+      calc,
+    ];
+  }
 
   // photos
-  async function shrink(file) {   // phone photos are large: resize before upload to save mobile data
+  // Limits, so every photo prints legibly in its frame on the report.
+  const PHOTO_RULES = { maxBytes: 25 * 1024 * 1024, minLong: 640, minShort: 480, goodLong: 1200 };
+  const PHOTO_TYPES = /^image\/(jpeg|png|webp|heic|heif)$/i;
+  // Fill the frame unless that would cut off more than a quarter of the photo (portrait, panorama).
+  function defaultFit(w, h) {
+    const [bw, bh] = S.meta.photo_box, r = w / h, R0 = bw / bh;
+    const kept = r > R0 ? R0 / r : r / R0;
+    return kept >= 0.75 ? 'fill' : 'whole';
+  }
+  async function checkPhoto(file) {
+    const name = file.name || 'photo';
+    if (file.type && !PHOTO_TYPES.test(file.type)) return { err: `${name}: use a JPEG, PNG, WebP or iPhone (HEIC) photo.` };
+    if (file.size > PHOTO_RULES.maxBytes) return { err: `${name}: larger than 25 MB.` };
+    let bmp;
+    try { bmp = await createImageBitmap(file, { imageOrientation: 'from-image' }); } catch { return { err: `${name}: this image could not be opened. Use a JPEG or PNG photo.` }; }
+    const long = Math.max(bmp.width, bmp.height), short = Math.min(bmp.width, bmp.height);
+    if (long < PHOTO_RULES.minLong || short < PHOTO_RULES.minShort) return { err: `${name}: only ${bmp.width} × ${bmp.height} pixels. Photos need at least 640 × 480 so they are legible in print.` };
+    return { bmp, fit: defaultFit(bmp.width, bmp.height) };
+  }
+  async function shrink(file, bmp) {   // phone photos are large: resize before saving
     try {
-      const bmp = await createImageBitmap(file, { imageOrientation: 'from-image' });
+      bmp = bmp || await createImageBitmap(file, { imageOrientation: 'from-image' });
       const s = Math.min(1, 1600 / Math.max(bmp.width, bmp.height));
       const c = document.createElement('canvas');
       c.width = Math.round(bmp.width * s); c.height = Math.round(bmp.height * s);
-      c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
-      const blob = await new Promise((r) => c.toBlob(r, 'image/jpeg', 0.85));
+      const g = c.getContext('2d');
+      g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height);   // transparent PNGs print on white
+      g.drawImage(bmp, 0, 0, c.width, c.height);
+      const blob = await new Promise((r) => c.toBlob(r, 'image/jpeg', 0.86));
       if (blob) return new File([blob], (file.name || 'photo').replace(/\.\w+$/, '') + '.jpg', { type: 'image/jpeg' });
     } catch { /* send the original */ }
     return file;
@@ -862,51 +995,109 @@
   async function uploadPhotos(files) {
     const list = [...files];
     const note = $('#photonote');
+    const rejected = [];
     for (let i = 0; i < list.length; i++) {
-      if (note) note.textContent = `Uploading photo ${i + 1} of ${list.length}…`;
+      if (note) note.textContent = `Checking and adding photo ${i + 1} of ${list.length}…`;
+      const chk = await checkPhoto(list[i]);
+      if (chk.err) { rejected.push(chk.err); continue; }
       try {
         const fd = new FormData();
-        fd.append('photos', await shrink(list[i]));
+        fd.append('photos', await shrink(list[i], chk.bmp));
+        fd.append('fit', chk.fit);
         const { report } = await api('POST', `/api/reports/${R.id}/photos`, fd);
         R.photos = report.photos; R.version = report.version; R.missing = report.missing; R.history = report.history;
         renderStep(true);
       } catch (e) { toast(e.message, 'err'); if (e.status === 409) break; }
     }
     if ($('#photonote')) $('#photonote').textContent = '';
+    if (rejected.length) modal({ title: rejected.length === 1 ? 'This photo was not added' : `${rejected.length} photos were not added`, icon: 'warn', tone: 'warn',
+      body: h('div', null, h('ul', { class: 'mlist' }, rejected.map((t) => h('li', null, t))), h('p', null, 'Take the photo again, or pick a larger copy from your gallery.')) });
   }
-  function photoCell(p) {
+  // Quick look at a photo on screen: too dark or blurred to read in print?
+  const PH_CHECK = new Map();
+  function photoWarnings(img, file) {
+    if (PH_CHECK.has(file)) return PH_CHECK.get(file);
+    const out = [];
+    try {
+      const w = 400, hh = Math.max(3, Math.round((400 * img.naturalHeight) / img.naturalWidth));
+      const c = document.createElement('canvas'); c.width = w; c.height = hh;
+      const g = c.getContext('2d'); g.drawImage(img, 0, 0, w, hh);
+      const d = g.getImageData(0, 0, w, hh).data;
+      const L = new Float32Array(w * hh);
+      let sum = 0;
+      for (let i = 0; i < L.length; i++) { L[i] = 0.299 * d[i * 4] + 0.587 * d[i * 4 + 1] + 0.114 * d[i * 4 + 2]; sum += L[i]; }
+      const mean = sum / L.length;
+      let lap = 0, n = 0;
+      for (let y = 1; y < hh - 1; y++) for (let x = 1; x < w - 1; x++) { const i = y * w + x; const v = 4 * L[i] - L[i - 1] - L[i + 1] - L[i - w] - L[i + w]; lap += v * v; n++; }
+      if (mean < 55) out.push('Very dark. It may not be readable in print; retake it with more light if you can.');
+      if (n && lap / n < 8) out.push('Looks blurred. Hold the phone still and retake it if the detail matters.');
+      if (Math.max(img.naturalWidth, img.naturalHeight) < PHOTO_RULES.goodLong) out.push('Low resolution. It will print, but small details may be soft.');
+    } catch { /* not checkable */ }
+    PH_CHECK.set(file, out);
+    return out;
+  }
+  function photoCell(p, idx) {
+    const [bw, bh] = S.meta.photo_box;
     const img = h('img', { alt: p.caption || 'Site photo' });
+    const warn = h('div', { class: 'phwarn' });
+    img.addEventListener('load', () => { const w = photoWarnings(img, p.file); warn.replaceChildren(...w.map((t) => h('div', null, t))); });
     blobUrl(photoPath(R.id, p.file)).then((u) => { img.src = u; }).catch(() => { img.replaceWith(h('span', { class: 'muted' }, 'Photo unavailable')); });
-    const cap = h('input', { type: 'text', placeholder: 'Short caption', value: p.caption, maxlength: 300, 'aria-label': 'Photo caption', style: 'width:100%;border:0;padding:8px;font-size:14px;background:transparent' });
-    cap.addEventListener('input', () => { p.caption = cap.value; queuePhotoMeta(p.file); });
-    const tags = h('div', { class: 'chips small', style: 'margin-top:6px' });
-    const paint = () => [...tags.children].forEach((b) => b.classList.toggle('on', b.textContent === p.tag));
-    S.meta.photo_tags.forEach((t) => tags.append(h('button', { type: 'button', class: 'chip', onclick: () => { p.tag = p.tag === t ? '' : t; paint(); queuePhotoMeta(p.file); } }, t)));
+    const frame = h('button', { type: 'button', class: 'frame fit-' + (p.fit || 'fill'), style: `aspect-ratio:${bw} / ${bh}`, title: 'Exactly as it prints. Tap to enlarge.', onclick: () => lightbox(R.photos, idx) }, img);
+    const fits = h('div', { class: 'chips small fitchips', role: 'radiogroup', 'aria-label': 'How the photo sits in its frame' });
+    const paintFit = () => { frame.className = 'frame fit-' + (p.fit || 'fill'); [...fits.children].forEach((b) => { const on = b.dataset.fit === (p.fit || 'fill'); b.classList.toggle('on', on); b.setAttribute('aria-pressed', on); }); };
+    [['fill', 'Fill frame'], ['whole', 'Whole photo']].forEach(([k, t]) => fits.append(h('button', { type: 'button', class: 'chip', 'data-fit': k, onclick: () => { p.fit = k; paintFit(); queuePhotoMeta(p.file); } }, t)));
+    paintFit();
+    const MAXC = 200;
+    const count = h('span', { class: 'capcount' });
+    const cap = h('textarea', { rows: 1, placeholder: 'Short caption, e.g. Open area behind the kitchen for the plant', maxlength: MAXC, 'aria-label': 'Photo caption', autocapitalize: 'sentences', class: 'capta' });
+    cap.value = p.caption || '';
+    const grow = () => { cap.style.height = 'auto'; cap.style.height = cap.scrollHeight + 'px'; count.textContent = `${cap.value.length}/${MAXC}`; };
+    cap.addEventListener('input', () => { p.caption = cap.value.replace(/\n+/g, ' '); grow(); queuePhotoMeta(p.file); });
+    cap.addEventListener('change', () => { const v = capSentences(cap.value.trim()); if (v !== cap.value) { cap.value = v; p.caption = v; grow(); queuePhotoMeta(p.file); } });
+    cap.addEventListener('keydown', (e) => { if (e.key === 'Enter') e.preventDefault(); });   // one line in the report, wrapped as needed
+    requestAnimationFrame(grow);
+    const tags = h('div', { class: 'chips small', role: 'radiogroup', 'aria-label': 'Photo tag' });
+    const paint = () => [...tags.children].forEach((b) => { const on = b.dataset.tag === p.tag; b.classList.toggle('on', on); b.setAttribute('aria-pressed', on); });
+    S.meta.photo_tags.forEach((t) => tags.append(h('button', { type: 'button', class: 'chip', 'data-tag': t, onclick: () => { p.tag = p.tag === t ? '' : t; paint(); queuePhotoMeta(p.file); } }, t)));
     paint();
-    return h('div', { class: 'photo' }, h('div', { class: 'frame' }, img), h('div', { class: 'card cap' }, cap), tags,
-      h('div', { style: 'margin-top:6px' }, dangerChip('Remove', async () => {
-        try { await api('DELETE', `/api/reports/${R.id}/photos/${p.file}`); R.photos = R.photos.filter((x) => x.file !== p.file); const { report } = { report: await loadReport(R.id) }; R.missing = report.missing; R.version = report.version; renderStep(true); }
+    return h('div', { class: 'photo' },
+      h('div', { class: 'row between phhead' }, h('span', { class: 'tl' }, `PHOTO ${idx + 1} · AS PRINTED`), dangerChip('Remove', async () => {
+        try { await api('DELETE', `/api/reports/${R.id}/photos/${p.file}`); R.photos = R.photos.filter((x) => x.file !== p.file); const report = await loadReport(R.id); R.missing = report.missing; R.version = report.version; renderStep(true); }
         catch (e) { toast(e.message, 'err'); }
-      })));
+      })),
+      frame, fits, warn,
+      h('div', { class: 'card cap' }, cap, count),
+      h('span', { class: 'tl', style: 'display:block;margin:8px 0 4px' }, 'TAG (PICK ONE)'), tags);
   }
   function step8() {
-    const input = h('input', { type: 'file', accept: 'image/*', multiple: true, class: 'hidden', onchange: () => { const f = input.files; if (f && f.length) uploadPhotos(f).then(() => { input.value = ''; }); } });
-    const tile = h('label', { class: 'addphoto' }, h('b', null, '+'), 'Add photo', input);
+    const input = h('input', { type: 'file', accept: 'image/jpeg,image/png,image/webp,image/heic,image/heif', multiple: true, class: 'hidden', onchange: () => { const f = input.files; if (f && f.length) uploadPhotos(f).then(() => { input.value = ''; }); } });
+    const [bw, bh] = S.meta.photo_box;
+    const tile = h('label', { class: 'addphoto', style: `aspect-ratio:${bw} / ${bh}` }, h('b', null, '+'), 'Add photos', input);
     const grid = h('div', { class: 'photos' }, R.photos.map(photoCell), tile);
     fieldRegs.set('photos', { el: document.createElement('i'), sync() { /* structural */ } });
     const n = R.photos.length;
-    return [grid, h('p', { class: 'hint' }, `${n} photo${n === 1 ? '' : 's'}. Photos shrink to fit automatically.`), h('p', { id: 'photonote', class: 'hint' })];
+    return [grid,
+      h('p', { class: 'hint' }, `${n} photo${n === 1 ? '' : 's'}. Each frame shows exactly what the report prints. Photos shrink to fit automatically: Fill frame crops the edges to fill the box; Whole photo keeps all of it, for tall or very wide shots. Captions wrap onto as many lines as they need.`),
+      h('p', { class: 'hint' }, 'Accepted: JPEG, PNG, WebP or iPhone photos, up to 25 MB, at least 640 × 480 pixels.'),
+      h('p', { id: 'photonote', class: 'hint' })];
   }
 
+  const LOCK_SVG = '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><rect x="2.5" y="7" width="11" height="8" fill="currentColor"/><path d="M5 7V5a3 3 0 0 1 6 0v2" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>';
   function step9() {
     if (!R.plant_size && effSize(R)) setField('plant_size', effSize(R));
-    const card = h('div', { class: 'card' }, h('div', { class: 'pad', id: 'rec' }));
-    const refresh = () => { $('#rec') && $('#rec').replaceChildren(...recParas(R).map((t) => h('p', { style: 'margin:0 0 10px' }, t))); };
+    const p1 = h('p', { class: 'lockp' }), p2 = h('p', { class: 'lockp' }, S.meta.rec_p2);
+    const refresh = () => { const size = effSize(R) || 'CHUGG 150'; p1.textContent = S.meta.rec_p1.replace('{size}', size).replace('{cap}', sizeCap(size)); };
     S.onDerived = refresh;
-    const out = [group('PLANT SIZE', chips(S.meta.plant_sizes, 'plant_size', { onChange: refresh })), card,
-      F('rec_extra', 'ADD A LINE ABOUT THIS SITE', { ph: 'Optional. Goes between the standard paragraphs.', multi: true, onInput: refresh, spell: true })];
-    setTimeout(refresh, 0);
-    return out;
+    refresh();
+    const locked = (n, para) => h('div', { class: 'lockcard', 'aria-readonly': 'true', 'aria-label': `Standard paragraph ${n}, fixed text` },
+      h('div', { class: 'lockhead' }, h('span', { class: 'lockchip' }, svgEl(LOCK_SVG), 'FIXED TEXT · CANNOT BE EDITED'), h('span', { class: 'locknum' }, `Standard paragraph ${n}`)), para);
+    return [
+      group('PLANT SIZE', chips(S.meta.plant_sizes, 'plant_size', { onChange: refresh })),
+      h('p', { class: 'hint', style: 'margin:2px 0 0' }, 'The report prints the recommendation in this order. The two grey paragraphs are standard AVRIS wording and cannot be changed here; the plant size in the first one follows your pick above. Only the white box is yours to write in.'),
+      locked(1, p1),
+      h('div', { class: 'yourline' }, F('rec_extra', 'YOUR LINE ABOUT THIS SITE (OPTIONAL, EDITABLE)', { ph: 'e.g. The plant fits in the open area behind the kitchen, next to the service gate.', multi: true, spell: true })),
+      locked(2, p2),
+    ];
   }
   function step10() {
     const extra = h('div', { class: 'stack' });
@@ -922,7 +1113,7 @@
   // step 11: check and send (dark)
   function step11() {
     const warn = h('div', { id: 'warn' });
-    const sig = signaturePad();
+    const sig = signatureField();
     const refresh = () => {
       const w = $('#warn'); if (!w) return;
       if (R.missing.length) w.replaceChildren(h('div', { class: 'notice', style: 'margin:0' }, `Still needed (${R.missing.length})`,
@@ -935,26 +1126,175 @@
     SV.after = () => { if (S.screen === 'step' && S.step === 10) pullRemote().then((k) => { refresh(); applyRemote(k, ''); }).catch(() => {}); };
     setTimeout(refresh, 0);
     const exports = h('div', { class: 'row' }, ['pdf', 'docx', 'csv', 'zip'].map((k) => btn({ pdf: 'PDF', docx: 'Word', csv: 'CSV', zip: 'All files' }[k], '', () => download(`/api/reports/${R.id}/export/${k}`, k.toUpperCase()), { small: true })));
-    return [warn, h('div', { class: 'only-narrow' }, reportOverview({ dark: true })), F('prepared_by', 'PREPARED BY *', { ph: 'Your name' }), group('SIGNATURE *', sig),
+    return [warn, h('div', { class: 'only-narrow' }, reportOverview({ dark: true })), F('prepared_by', 'PREPARED BY *', { ph: 'Your name', onInput: () => { if (S.onName) S.onName(); } }), group('SIGNATURE *', sig),
       h('p', { class: 'hint' }, 'Generate report locks this report, moves it to Completed and prepares the PDF, Word and CSV files. You can reopen it later to edit.' + (S.meta.cloud ? ' It needs an internet connection: it issues the report number and saves everything to Google Drive and the register.' : '')),
       btn('Preview report', '', () => { location.hash = `#/r/${R.id}/preview`; }), exports];
   }
-  function signaturePad() {
-    const c = h('canvas', { class: 'sig', width: 350, height: 140, 'aria-label': 'Signature pad' });
-    const g = c.getContext('2d');
-    const paint = () => {
-      g.clearRect(0, 0, 350, 140); g.lineWidth = 2; g.lineCap = 'round'; g.lineJoin = 'round'; g.strokeStyle = INK;
-      (R.prepared_sig || []).forEach((st) => { if (st.length < 2) return; g.beginPath(); g.moveTo(st[0][0], st[0][1]); st.slice(1).forEach(([x, y]) => g.lineTo(x, y)); g.stroke(); });
-    };
-    paint();
+  // Signature: drawn on screen or a photo of a signed paper. Both are stored as one PNG with the exact
+  // proportions of the signature box on the report, so the box on screen is exactly what prints.
+  const SIG_PX = 4;                       // stored image pixels per point (about 290 dpi)
+  const SIG_RULES = { maxBytes: 10 * 1024 * 1024, minW: 600, minH: 150, maxCut: 0.02 };
+  function sigCanvas() {
+    const [bw, bh] = S.meta.sig_box;
+    const c = h('canvas', { class: 'sigbox', width: bw * SIG_PX, height: bh * SIG_PX, style: `aspect-ratio:${bw} / ${bh}` });
+    return c;
+  }
+  const loadDataImg = (url) => new Promise((res) => { if (!url) { res(null); return; } const i = new Image(); i.onload = () => res(i); i.onerror = () => res(null); i.src = url; });
+  async function processSignature(file) {
+    const [bw, bh] = S.meta.sig_box;
+    const W = bw * SIG_PX, H = bh * SIG_PX, ratio = bw / bh;
+    if (file.type && !/^image\/(png|jpeg|webp|heic|heif)$/i.test(file.type)) return { errs: ['Use a PNG or JPEG image of your signature.'] };
+    if (file.size > SIG_RULES.maxBytes) return { errs: ['That image is larger than 10 MB. Use a smaller photo.'] };
+    let bmp;
+    try { bmp = await createImageBitmap(file, { imageOrientation: 'from-image' }); } catch { return { errs: ['That image could not be opened. Use a PNG or JPEG.'] }; }
+    if (bmp.width < SIG_RULES.minW || bmp.height < SIG_RULES.minH) return { errs: [`The image is ${bmp.width} × ${bmp.height} pixels. It needs at least ${SIG_RULES.minW} × ${SIG_RULES.minH} pixels so the signature prints sharply.`] };
+    const k = Math.min(1, 2000 / Math.max(bmp.width, bmp.height));
+    const ww = Math.round(bmp.width * k), wh = Math.round(bmp.height * k);
+    const c = document.createElement('canvas'); c.width = ww; c.height = wh;
+    const g = c.getContext('2d', { willReadFrequently: true });
+    g.fillStyle = '#fff'; g.fillRect(0, 0, ww, wh); g.drawImage(bmp, 0, 0, ww, wh);   // transparent PNG: on white
+    const d = g.getImageData(0, 0, ww, wh).data, N = ww * wh;
+    const L = new Uint8Array(N), hist = new Uint32Array(256);
+    for (let i = 0; i < N; i++) { const v = (0.299 * d[i * 4] + 0.587 * d[i * 4 + 1] + 0.114 * d[i * 4 + 2]) | 0; L[i] = v; hist[v]++; }
+    const pct = (q) => { let acc = 0; for (let v = 0; v < 256; v++) { acc += hist[v]; if (acc >= q * N) return v; } return 255; };
+    const paper = pct(0.6), dark = pct(0.002);
+    if (paper - dark < 60) return { errs: ['No clear signature was found. Sign in dark ink on plain white paper and take the photo in good light.'] };
+    const thr = dark + (paper - dark) * 0.5;
+    // the box: centred, the widest strip of the photo with the box's proportions
+    let cx = 0, cy = 0, cw = ww, ch = wh;
+    if (ww / wh > ratio) { cw = wh * ratio; cx = (ww - cw) / 2; } else { ch = ww / ratio; cy = (wh - ch) / 2; }
+    let ink = 0, out = 0, edge = 0, x0 = 1e9, y0 = 1e9, x1 = -1, y1 = -1;
+    const em = Math.max(2, Math.round(Math.min(ww, wh) * 0.01));
+    for (let y = 0; y < wh; y++) for (let x = 0; x < ww; x++) {
+      if (L[y * ww + x] >= thr) continue;
+      ink++;
+      if (x < em || y < em || x >= ww - em || y >= wh - em) edge++;
+      if (x < cx || x >= cx + cw || y < cy || y >= cy + ch) out++;
+      else { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+    }
+    if (ink < N * 0.0015) return { errs: ['No signature was found in this image. Sign in dark ink on plain white paper, then upload the photo.'] };
+    if (ink > N * 0.35) return { errs: ['Most of this image is dark, so it does not look like a signature on paper. Photograph the signature on plain white paper.'] };
+    const errs = [], warns = [];
+    const cut = out / ink;
+    if (edge > Math.max(15, ink * 0.0015)) errs.push('The signature runs off the edge of the photo, so part of it is missing. Take the photo again with some white paper showing all round the signature.');
+    else if (cut > SIG_RULES.maxCut) errs.push(`About ${Math.max(3, Math.round(cut * 100))}% of the signature falls outside the box and is cut off, as the preview shows. Crop the photo closer around the signature, keep it in the middle, and upload it again.`);
+    else if (x1 >= 0 && (x1 - x0) < cw * 0.35 && (y1 - y0) < ch * 0.45) warns.push('The signature is small in the box. It will print, but cropping the photo closer makes it clearer.');
+    // clean copy: paper to white, ink to Engineering Ink, at the exact box size
+    const o = document.createElement('canvas'); o.width = W; o.height = H;
+    const og = o.getContext('2d', { willReadFrequently: true });
+    og.drawImage(c, cx, cy, cw, ch, 0, 0, W, H);
+    const od = og.getImageData(0, 0, W, H), px = od.data;
+    for (let i = 0; i < W * H; i++) {
+      const v = 0.299 * px[i * 4] + 0.587 * px[i * 4 + 1] + 0.114 * px[i * 4 + 2];
+      const a = Math.max(0, Math.min(1, ((paper - v) / Math.max(1, paper - dark)) * 1.6 - 0.2));
+      px[i * 4] = 255 - (255 - 17) * a; px[i * 4 + 1] = 255 - (255 - 24) * a; px[i * 4 + 2] = 255 - (255 - 39) * a; px[i * 4 + 3] = 255;
+    }
+    og.putImageData(od, 0, 0);
+    return { png: o.toDataURL('image/png'), errs, warns };
+  }
+  function signatureField() {
+    const [bw, bh] = S.meta.sig_box;
+    const W = bw * SIG_PX, H = bh * SIG_PX;
+    const hasLegacy = () => (R.prepared_sig || []).length > 0 && !R.prepared_sig_img;
+    let mode = R.prepared_sig_img && !(R.prepared_sig || []).length ? 'upload' : 'draw';
+    let pending = null;      // an uploaded image waiting for "Use this signature"
+    const box = sigCanvas();
+    const g = box.getContext('2d');
+    const nameEl = h('div', { class: 'sp-name' });
+    const paintName = () => { nameEl.textContent = (R.prepared_by || '').trim() || 'Your name prints here'; nameEl.classList.toggle('empty', !(R.prepared_by || '').trim()); };
+    const note = h('div', { class: 'sp-note' });
+    const controls = h('div', { class: 'sp-controls' });
+    const tabs = h('div', { class: 'chips', role: 'tablist', 'aria-label': 'How to sign' });
+
+    async function paint() {
+      g.setTransform(1, 0, 0, 1, 0, 0);
+      g.fillStyle = '#fff'; g.fillRect(0, 0, W, H);
+      const src = pending ? pending.png : R.prepared_sig_img;
+      if (src) { const im = await loadDataImg(src); if (im) g.drawImage(im, 0, 0, W, H); }
+      else if (hasLegacy()) {   // signature from an earlier version: fitted into the box like the old report
+        const pts = R.prepared_sig.flat(); const xs = pts.map((p) => p[0]), ys = pts.map((p) => p[1]);
+        const x0 = Math.min(...xs), y0 = Math.min(...ys), sw = Math.max(1, Math.max(...xs) - x0), sh = Math.max(1, Math.max(...ys) - y0);
+        const k = Math.min((W - 16) / sw, (H - 16) / sh, 0.6 * SIG_PX);
+        g.strokeStyle = INK; g.lineWidth = 1.1 * SIG_PX; g.lineCap = 'round'; g.lineJoin = 'round';
+        R.prepared_sig.forEach((st) => { if (st.length < 2) return; g.beginPath(); st.forEach(([x, y], i) => { const X = 8 + (x - x0) * k, Y = (H - sh * k) / 2 + (y - y0) * k; if (i) g.lineTo(X, Y); else g.moveTo(X, Y); }); g.stroke(); });
+      }
+      paintName();
+    }
+    function saveDrawn() {
+      const png = box.toDataURL('image/png');
+      R.prepared_sig_img = png;
+      setField('prepared_sig', R.prepared_sig);
+      setField('prepared_sig_img', png);
+    }
+    function clearAll() {
+      pending = null;
+      R.prepared_sig = []; R.prepared_sig_img = '';
+      setField('prepared_sig', []); setField('prepared_sig_img', '');
+      build();
+    }
+    // drawing straight into the print-size box
     let cur = null;
-    const pt = (e) => { const r = c.getBoundingClientRect(); return [Math.round(((e.clientX - r.left) * 350) / r.width * 10) / 10, Math.round(((e.clientY - r.top) * 140) / r.height * 10) / 10]; };
-    c.addEventListener('pointerdown', (e) => { c.setPointerCapture(e.pointerId); cur = [pt(e)]; });
-    c.addEventListener('pointermove', (e) => { if (!cur) return; const p = pt(e), l = cur[cur.length - 1]; cur.push(p); g.beginPath(); g.moveTo(l[0], l[1]); g.lineTo(p[0], p[1]); g.stroke(); });
-    const end = () => { if (!cur) return; if (cur.length > 1) { R.prepared_sig = [...R.prepared_sig, cur]; setField('prepared_sig', R.prepared_sig); } cur = null; };
-    c.addEventListener('pointerup', end); c.addEventListener('pointercancel', end);
-    fieldRegs.set('prepared_sig', { el: c, sync: paint });
-    return h('div', null, c, h('div', { style: 'margin-top:6px' }, h('button', { type: 'button', class: 'chip outline', onclick: () => { R.prepared_sig = []; setField('prepared_sig', []); paint(); } }, 'Clear')));
+    const pt = (e) => { const r = box.getBoundingClientRect(); return [Math.round(((e.clientX - r.left) * W) / r.width * 10) / 10, Math.round(((e.clientY - r.top) * H) / r.height * 10) / 10]; };
+    box.addEventListener('pointerdown', (e) => {
+      if (mode !== 'draw') return;
+      if (hasLegacy() || (R.prepared_sig_img && !(R.prepared_sig || []).length)) { R.prepared_sig = []; R.prepared_sig_img = ''; g.fillStyle = '#fff'; g.fillRect(0, 0, W, H); }
+      box.setPointerCapture(e.pointerId); cur = [pt(e)];
+      g.strokeStyle = INK; g.lineWidth = 1.3 * SIG_PX; g.lineCap = 'round'; g.lineJoin = 'round';
+    });
+    box.addEventListener('pointermove', (e) => { if (!cur) return; const p = pt(e), l = cur[cur.length - 1]; cur.push(p); g.beginPath(); g.moveTo(l[0], l[1]); g.lineTo(p[0], p[1]); g.stroke(); });
+    const end = () => { if (!cur) return; if (cur.length > 1) { R.prepared_sig = [...(R.prepared_sig || []), cur]; saveDrawn(); build(true); } cur = null; };
+    box.addEventListener('pointerup', end); box.addEventListener('pointercancel', end);
+
+    const pick = h('input', { type: 'file', accept: 'image/png,image/jpeg,image/webp,image/heic,image/heif', class: 'hidden', onchange: async () => {
+      const f = pick.files && pick.files[0]; pick.value = '';
+      if (!f) return;
+      note.replaceChildren(h('div', { class: 'sp-msg' }, 'Checking the image…'));
+      const res = await processSignature(f);
+      if (!res.png) { pending = null; build(); note.replaceChildren(h('div', { class: 'sp-msg err' }, res.errs[0])); return; }
+      pending = res;
+      build();
+    } });
+    function build(quiet) {
+      tabs.replaceChildren(...[['draw', 'Draw on screen'], ['upload', 'Upload a photo']].map(([k, t]) => h('button', { type: 'button', role: 'tab', 'aria-selected': mode === k, class: 'chip' + (mode === k ? ' on' : ''), onclick: () => { if (mode === k) return; mode = k; pending = null; build(); } }, t)));
+      box.classList.toggle('drawing', mode === 'draw');
+      box.setAttribute('aria-label', mode === 'draw' ? 'Signature box. Sign here with your finger or mouse.' : 'Signature preview');
+      const ctl = [], msgs = [];
+      if (mode === 'draw') {
+        msgs.push(h('div', { class: 'sp-msg' }, hasLegacy() ? 'This signature was made in an earlier version of the tool. Sign again to replace it.' : 'Sign inside the white box with your finger, a stylus or the mouse. The box is the exact shape of the signature space on the report.'));
+        ctl.push(h('button', { type: 'button', class: 'chip outline', onclick: clearAll }, 'Clear'));
+      } else if (pending) {
+        pending.errs.forEach((t) => msgs.push(h('div', { class: 'sp-msg err' }, t)));
+        pending.warns.forEach((t) => msgs.push(h('div', { class: 'sp-msg warn' }, t)));
+        if (!pending.errs.length) msgs.push(h('div', { class: 'sp-msg' }, 'This preview is exactly what prints. Anything outside the box has been cut off.'));
+        ctl.push(btn('Use this signature', 'send', () => {
+          R.prepared_sig = []; R.prepared_sig_img = pending.png;
+          setField('prepared_sig', []); setField('prepared_sig_img', pending.png);
+          pending = null; build(); toast('Signature saved', 'ok');
+        }, { small: true, disabled: pending.errs.length > 0 }));
+        ctl.push(h('label', { class: 'chip outline', style: 'cursor:pointer' }, 'Choose another photo', pick));
+      } else {
+        msgs.push(h('div', { class: 'sp-msg' }, R.prepared_sig_img && !(R.prepared_sig || []).length ? 'Saved. This is exactly how your signature prints.' : 'Photograph your signature on plain white paper in dark ink, close up, so it fills a wide strip about 4 times wider than it is tall.'));
+        ctl.push(h('label', { class: 'chip' + (R.prepared_sig_img ? ' outline' : ' on'), style: 'cursor:pointer' }, R.prepared_sig_img && !(R.prepared_sig || []).length ? 'Replace photo' : 'Choose photo', pick));
+        if (R.prepared_sig_img) ctl.push(h('button', { type: 'button', class: 'chip outline', onclick: clearAll }, 'Remove'));
+      }
+      controls.replaceChildren(...ctl);
+      if (!quiet || mode !== 'draw') note.replaceChildren(...msgs);
+      paint();
+    }
+    fieldRegs.set('prepared_sig', { el: box, sync: () => { if (!cur) build(true); } });
+    fieldRegs.set('prepared_sig_img', { el: box, sync: () => { if (!cur) build(true); } });
+    S.onName = paintName;
+    build();
+    const rules = h('details', { class: 'sp-rules' }, h('summary', null, 'Photo rules and what this signature is'),
+      h('ul', null,
+        h('li', null, 'PNG, JPEG or iPhone photo, up to 10 MB, at least 600 × 150 pixels.'),
+        h('li', null, 'Dark ink on plain white paper, in good light, with no shadow across it.'),
+        h('li', null, `The box is ${bw} × ${bh} pt on the report (about 4 to 1). The photo is cut to this shape from its centre. If any part of the signature would be cut off, the image is refused so you can upload a better one.`),
+        h('li', null, 'The paper is turned white and the ink dark, so the signature prints cleanly.'),
+        h('li', null, 'This places an image of your signature on an internal AVRIS report. It is not a certified digital signature (DSC) under the IT Act, so it should not be used for contracts or filings.')));
+    return h('div', { class: 'sigfield' }, tabs,
+      h('div', { class: 'sigprev' }, h('span', { class: 'sp-lab' }, 'PREPARED BY'), box, h('div', { class: 'sp-line' }), nameEl),
+      note, controls, rules);
   }
   async function saveToDrive() {
     S.screen = 'saving';
@@ -1136,9 +1476,14 @@
         const [, x, y, w, hh, key] = p; const im = imgs['logo:' + key];
         if (im) { let [bx, by, bw, bh] = fit(im.width, im.height, x, y, w, hh, 0); if (key === 'chugg') bx = x + w - bw; g.drawImage(im, bx, by, bw, bh); }
       } else if (k === 'photo') {
-        const [, x, y, w, hh, file] = p; const im = file && imgs['photo:' + file];
-        if (im) { const [bx, by, bw, bh] = fit(im.width, im.height, x, y, w, hh); g.drawImage(im, bx, by, bw, bh); }
+        const [, x, y, w, hh, file, mode] = p; const im = file && imgs['photo:' + file];
+        if (im && mode !== 'whole') {   // fill: cover the frame, clip what falls outside
+          const sc = Math.max(w / im.width, hh / im.height), bw = im.width * sc, bh = im.height * sc;
+          g.save(); g.beginPath(); g.rect(x, y, w, hh); g.clip(); g.drawImage(im, x + (w - bw) / 2, y + (hh - bh) / 2, bw, bh); g.restore();
+        } else if (im) { const [bx, by, bw, bh] = fit(im.width, im.height, x, y, w, hh); g.drawImage(im, bx, by, bw, bh); }
         else { g.fillStyle = '#3a4152'; g.font = 'bold 8px Helvetica, Arial, sans-serif'; g.textAlign = 'center'; g.fillText('PHOTO', x + w / 2, y + hh / 2 + 3); }
+      } else if (k === 'sigimg') {
+        const [, x, y, w, hh] = p; if (imgs.sig) g.drawImage(imgs.sig, x, y, w, hh);
       } else if (k === 'sig') {
         g.strokeStyle = INK; g.lineWidth = 1.1; g.lineCap = 'round'; g.lineJoin = 'round';
         p[1].forEach((st) => { if (st.length < 2) return; g.beginPath(); g.moveTo(st[0][0], st[0][1]); st.slice(1).forEach(([x, y]) => g.lineTo(x, y)); g.stroke(); });
@@ -1169,6 +1514,7 @@
       const wanted = [['logo:iso', '/api/logo/iso'], ['logo:avrislh', '/api/logo/avrislh']];
       lay.pages.forEach((pg) => pg.forEach((p) => { if (p[0] === 'photo' && p[5]) wanted.push(['photo:' + p[5], photoPath(id, p[5])]); }));
       await Promise.all([...new Map(wanted).entries()].map(async ([k, path]) => { try { imgs[k] = await loadImg(await blobUrl(path)); } catch { imgs[k] = null; } }));
+      if (R.prepared_sig_img) imgs.sig = await loadImg(R.prepared_sig_img);
       if (nav === S.nav) render();
     } catch (e) { pages.replaceChildren(h('p', { class: 'empty' }, e.message)); }
   }
